@@ -58,3 +58,4 @@
 - 2026-03-12 14:12:41 +0900 [検証] `npm run build` 成功。`/assets/app.js` `/assets/app.css` `/assets/fonts/body.ttf` は 200、`/api/issues/{id}/print-pdf` は browser-side 生成へ誘導する 409 を返すことを確認した。
 - 2026-03-12 14:13:22 +0900 [検証] `http://localhost:12040/issues/.../edit` と `/print` を Chrome で確認。右側は blob PDF iframe の A4 固定プレビューへ置き換わり、sample 寄りの固定紙面になった。
 - 2026-03-12 23:49:22 +0900 [コミット方針] `git status` では 38 件すべてが未追跡、`git rev-parse --verify HEAD` は失敗し初回コミット状態。topic 分割よりも「常会案内Web編集基盤の初期投入」として 1 コミットに束ねる方が履歴として自然と判断。
+- 2026-03-12 23:50:47 +0900 [コミット] root commit `0030a49` を作成。件名は `feat: 常会案内の初期Web編集基盤を追加` とし、Rust/Axum API・DB migration・Web編集UI・PDF preview/build 導線・運用補助スクリプトを初期実装として一括投入した。
