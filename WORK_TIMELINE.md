@@ -1,0 +1,60 @@
+- 2026-03-11 16:17:01 +0900 [調査] `jab` の `watch-run-common.sh` / `watch-run-kodomo.sh` を確認し、`PGURI` を環境変数で受ける共通 watch スクリプト構成を `jokai` に持ち込む方針を決めた。
+- 2026-03-11 16:17:37 +0900 [設計] `jokai` では `DATABASE_URL` / `DATABASE_ADMIN_URL` / `JOKAI_BIND` / `JOKAI_STORAGE_DIR` を共通環境変数にし、`web` と `db init|migrate|status|reset` を shell script と Rust CLI の両方から叩ける構成にする方針へ確定した。
+- 2026-03-11 16:21:15 +0900 [実装] `watch-run-common.sh`・`watch-run-server.sh`・`run-web.sh`・`db-*.sh` を追加し、`jab` 風の watch 起動と常用コマンドを揃えた。
+- 2026-03-11 16:21:47 +0900 [実装] Rust 側に `web` / `db init|migrate|status|reset` を追加し、`db/001_init.sql` で `issues`・`blocks`・`attachments`・`generated_files` の初期スキーマを定義した。
+- 2026-03-11 16:22:27 +0900 [安全性] `db-reset.sh` が暗黙に `--yes` を付ける形は危険なので撤回し、呼び出し側が明示指定する方式へ変更した。
+- 2026-03-11 16:25:20 +0900 [設定] `jab` の実運用既定に合わせ、`jokai` の既定 `DATABASE_URL` / `DATABASE_ADMIN_URL` を `postgresql://postgres:postgres@10.0.0.100:5432/{jokai|postgres}` へ変更した。
+- 2026-03-11 16:26:47 +0900 [実行] `./db-status.sh` で `10.0.0.100:5432` への接続は成功、`database_exists: false` を確認。次に `db-init` で DB 新規作成へ進む。
+- 2026-03-11 16:27:07 +0900 [実行] `./db-init.sh` を実行し、`jokai` DB 作成と `001_init.sql` 適用に成功。保存先は `.../jokai/data` を利用。
+- 2026-03-11 16:27:18 +0900 [起動] `./run-web.sh` を実行し、`http://0.0.0.0:8787` で `jokai web` の待受開始を確認。
+- 2026-03-11 16:27:26 +0900 [検証] `curl http://127.0.0.1:8787/healthz` は `ok`、`/api/meta` は `applied_migrations=[001_init.sql]`、`/api/issues` は空配列を返し、初期状態のAPI疎通を確認。
+- 2026-03-11 16:34:23 +0900 [実装] `src/main.rs` を一覧/作成/読込/保存の editor API に拡張し、`/issues`・`/issues/:id/edit`・`/assets/app.css`・`/assets/app.js` を配信する前提へ更新。`watch-run-common.sh` も `web/` 監視を追加。
+- 2026-03-11 16:38:13 +0900 [実装] `web/app.css` と `web/app.js` を追加し、案内一覧・新規作成・issue編集・A4プレビューをビルド不要の ES module で動かす UI シェルを実装。旧 `run-web` セッションは再起動前に停止した。
+- 2026-03-11 16:38:55 +0900 [修正] `axum 0.8` のルート記法差分で `/:id` が panic 要因だったため、`/issues/{id}/edit` と `/api/issues/{id}` に修正。未使用 `post`/`put` import も整理した。
+- 2026-03-11 16:40:25 +0900 [修正] 詳細/保存 API の 500 は `tokio-postgres` へ `&&str` を渡していたのが原因と判断し、`issue_id` を `String` として bind する形へ修正した。
+- 2026-03-11 16:41:20 +0900 [修正] 500 が継続したため原因を再分析し、`$1::uuid` bind が `tokio-postgres` の UUID シリアライズ未対応を踏んでいると判断。比較を `id::text = $1` へ寄せ、block insert も `select id from issues where id::text = $1` 方式へ変更した。
+- 2026-03-11 16:42:16 +0900 [検証] `./run-web.sh` 再起動後、`POST /api/issues`・`GET /api/issues/{id}`・`PUT /api/issues/{id}` が成功。`/api/issues` でも title 更新と `block_count=2` を確認。`/assets/app.css` と `/assets/app.js` はともに 200 応答。
+- 2026-03-11 16:55:38 +0900 [実装] `multipart` upload を導入し、block 単位の attachment 登録・削除・content 配信 API を追加。block 保存ロジックも upsert へ変更し、既存 block の attachment が保存時に消えないよう修正。
+- 2026-03-11 16:56:17 +0900 [検証] `driver.pdf` を block `a7d21f9d-73e6-4ae6-8d83-c6e54d1e787d` に upload。`/api/issues/{id}` で `attachments[0].mime_type=application/pdf` と `content_url` を確認し、`/api/attachments/{id}/content` は `content-type: application/pdf` を返した。
+- 2026-03-11 17:28:53 +0900 [実装] `AGENTS.md` に `docs/exmple.png` を正本見本とする紙面ルールを追記。`print` route / `print-pdf` route / `thumbnail` route の基盤を追加し、editor 側も `印刷プレビュー` と `資料ビューア` を分離して notice 本体を正本寄せに変更した。
+- 2026-03-11 17:30:26 +0900 [修正] `pdftoppm` / browser の検出を `command -v` ベースへ修正。`print-pdf` 側の Chrome 起動にも `--no-sandbox` / `--disable-dev-shm-usage` / `--disable-crash-reporter` を追加した。
+- 2026-03-11 17:36:36 +0900 [修正] Linux 側 headless browser は crashpad/network service で不安定だったため、`print-pdf` の既定ブラウザを Windows 側 `chrome.exe` 優先に変更。`/mnt/c/...` 出力先は Windows パスへ変換して渡すようにした。
+- 2026-03-11 17:39:03 +0900 [修正] Windows Chrome へ project 配下の Unicode path を直接渡すと停滞したため、生成PDFの一時出力先を Windows Temp 配下へ変更。必要ならそこから `data/generated/...` へコピーする方式に切り替えた。
+- 2026-03-11 17:40:55 +0900 [修正] `chrome.exe` の `--user-data-dir` 付与で `print-pdf` リクエストが停滞したため撤回。手動成功パターンに合わせ、Windows Temp 出力 + user-data-dir なしへ戻した。
+- 2026-03-11 17:45:59 +0900 [修正] `print` route を JS shell からサーバ側静的 HTML へ変更。これで `print-pdf` は client-side fetch 完了待ちを持たず、Windows Chrome から直接印刷対象にできる構成になった。
+- 2026-03-11 17:53:38 +0900 [修正] `print-pdf` の browser 起動〜PDF出現待ちを `tokio::task::spawn_blocking` へ隔離。サーバ自身が `/issues/{id}/print` を返せるようにし、executor を blocking sleep で塞がない構成へ修正した。
+- 2026-03-11 17:54:43 +0900 [検証] `/issues/{id}/print` は静的HTMLを返却、`/api/attachments/{id}/thumbnail` は `image/png` を返却、`/api/issues/{id}/print-pdf` は `/tmp/jokai-api.pdf` へ正常取得できた。生成物は `data/generated/.../notice-1773219270292.pdf` として保存を確認。
+- 2026-03-11 17:51:41 +0900 [修正] `chrome.exe` が PDF 出力後も終了しないケースに対応するため、`print-pdf` は child process 完了待ちを廃止。出力ファイルの存在とサイズをポーリングし、生成確認後に child を kill/wait して返す方式へ変更した。
+- 2026-03-12 12:06:12 +0900 [調査] `build-error.txt` と `test-error.txt` はともに正常終了。`codex resume --help` と `~/.codex/state_5.sqlite?immutable=1` を確認し、前回 `jokai` セッション `019cdb79-ce3e-79f0-a138-65e43ec49920` は `.../programs/jokai` で記録され、現在の `.../programs/jokai/jokai` とは CWD 不一致で picker から外れるのが主因と判断。
+- 2026-03-12 12:10:59 +0900 [設定] 既定ポートを `8787` から `12040` へ変更する要求を受領。`src/main.rs` の `DEFAULT_BIND` と `run-web.sh` / `watch-run-server.sh` の `JOKAI_BIND` 既定値を更新する方針で着手。
+- 2026-03-12 12:14:44 +0900 [UI] 一覧/編集画面の大見出しが過剰で不自然だったため、`web/app.js` のタイトル文言を機能中心の短い表現へ変更し、`web/app.css` の `.page-title` / `.page-lead` も一段小さく落ち着いた設定へ調整した。
+- 2026-03-12 12:17:18 +0900 [UI] 印刷画面の色味が `docs/exmple.png` と離れていたため、`web/app.css` の `notice-page` 系を白地・黒本文・赤注記ベースへ変更。暖色グラデーションと茶色寄りの本文色を外し、サムネ周辺も無彩色寄りへ寄せた。
+- 2026-03-12 12:17:18 +0900 [UI] 画面全体の余白が過多だったため、`web/app.css` で shell/masthead/panel/card/block/preview/notice-page の padding と gap をまとめて縮小。特に印刷紙面 (`notice-page`) の内側余白、本文行間、右脇サムネとの間隔を強めに詰めた。
+- 2026-03-12 13:50:22 +0900 [設計] `pdfme` UI ではなく `pdfme generate() -> 実PDF blob を iframe へ表示` を正本プレビュー方針として採用。`web-dist` 配信とフォント asset 追加を前提に実装へ着手。
+- 2026-03-12 14:13:24 +0900 [実装] `package.json` と `vite.config.js` を追加し、`web-src/` から `web-dist/app.js` `web-dist/app.css` を固定名で出力するフロント build 導線へ切替。
+- 2026-03-12 14:13:24 +0900 [実装] `web-src/main.js` と `web-src/notice-pdf.js` で fixed-template `pdfme` 生成を導入。編集画面右側と `/issues/{id}/print` は HTML 模写ではなく生成済み PDF blob の iframe preview に変更。
+- 2026-03-12 14:13:24 +0900 [実装] `src/main.rs` で `/assets/app.css` `/assets/app.js` を `web-dist` から配信し、日本語フォント asset route を追加。`/issues/{id}/print` は frontend shell 化、`/api/issues/{id}/print-pdf` は browser-side 出力へ誘導する 409 応答へ変更。
+- 2026-03-12 14:13:24 +0900 [実装] `run-web.sh` と `watch-run-common.sh` を `npm run build` 前提に更新。watch 対象を `web-src` `package.json` `package-lock.json` `vite.config.js` へ拡張。
+- 2026-03-12 14:13:24 +0900 [検証] `npm run build` 成功。`build-error.txt` `test-error.txt` `clippy-error.txt` は正常終了を確認。
+- 2026-03-12 14:13:24 +0900 [検証] `http://localhost:12040/issues/c31a1785-b841-49b4-9608-5c5ad8f9b3c5/edit` と `/print` を Chrome で確認。A4 比率固定の実PDF preview と browser-side `案内PDFを出力` を確認。
+- 2026-03-12 14:13:24 +0900 [検証] body font を `ttc` にすると `this.font.createSubset is not a function` で preview が壊れることを確認。`ttf` ベースの `YuGothic-Bold.ttf` と `yumin.ttf` に戻して安定動作を優先。
+- 2026-03-12 14:13:24 +0900 [検証] テスト issue `c31a1785-b841-49b4-9608-5c5ad8f9b3c5` の block `a7d21f9d-73e6-4ae6-8d83-c6e54d1e787d` に `docs/exmple.png` を添付し、右脇サムネと資料 viewer の反映を確認。
+- 2026-03-12 14:27:31 +0900 [分析] `../docs` の実PDF `20250913-R7年9月度-農家常会.pdf` と `20251017-R7年10月度-農家常会.pdf` を再確認。現行 `issue -> blocks -> attachments` の単層モデルでは、既存紙面の「大見出し配下に複数項目、それぞれ右脇に個別サムネ」という構造を再現できず、preview 不一致は構造問題だと判断。
+- 2026-03-12 15:42:44 +0900 [実装] `db/002_block_items.sql` を追加し、`blocks` を大項目、`block_items` を小項目として扱えるよう拡張。既存 block 本文は第1小項目へ移行し、attachment は `item_id` へ結び直す migration を適用。
+- 2026-03-12 15:42:44 +0900 [実装] `web-src/main.js` を section/item 編集 UI に更新。大項目の下に複数小項目を持たせ、資料追加は item 単位 API へ切替。
+- 2026-03-12 15:42:44 +0900 [実装] `web-src/notice-pdf.js` を section/item 前提へ改修。大項目見出しと各小項目ごとの右脇サムネ配置へ変更し、`資料なし` のダミー表示を減らして sample 寄りに調整。
+- 2026-03-12 15:42:44 +0900 [実装] blob を `iframe` に投げる preview を廃止し、`pdfjs-dist` で生成済み PDF を canvas 描画する方式へ変更。ブラウザ内蔵 PDF viewer 依存を外した。
+- 2026-03-12 15:42:44 +0900 [不具合対応] `pdfjs` worker が `/assets/pdf.worker.js` を要求する一方で build 出力は `web-dist/assets/pdf.worker.js` 配下だったため、`src/main.rs` の asset 配信に fallback を追加して worker 読込失敗を解消。
+- 2026-03-12 15:42:44 +0900 [検証] `http://localhost:12040/issues/c31a1785-b841-49b4-9608-5c5ad8f9b3c5/edit` を Chrome で再確認。共有スクショで見えていた「右 preview が blob 名だけ出て白い」症状は再現せず、canvas 上で A4 preview 表示を確認。
+- 2026-03-12 16:01:35 +0900 [分析] 共有スクショ `timg_01KKGDBG1N879VJH8FDJJ8CKV8.png` を確認。黒帯は A4 overflow ではなく、A4 紙面内の右端と下端が黒く描かれていた描画不具合。現行実装で DOM 実寸と canvas ピクセルを確認したところ、紙(wrapper)と canvas は同寸で、四隅ピクセルは白だったため overflow 説は否定。
+- 2026-03-12 16:01:35 +0900 [実装] `src/main.rs` の `app_shell` に build timestamp query を付与し、`/assets/app.js` `/assets/app.css` `/assets/*` を `Cache-Control: no-store` で返すよう変更。古い frontend asset や worker を握ったままになる再発経路を抑止。
+- 2026-03-12 13:50:58 +0900 [環境] `npm init -y` と `npm install @pdfme/common@5.5.8 @pdfme/generator@5.5.8 @pdfme/ui@5.5.8 @pdfme/schemas@5.5.8 vite@7.1.7` を実行し、pdfme bundle 用の Node 依存を追加した。
+- 2026-03-12 13:51:27 +0900 [調査] 日本語 PDF 用フォント候補を確認。Linux 側 `DroidSansFallbackFull.ttf` と Windows 側 `YuGothic-Bold.ttf` / `yumin.ttf` を asset route から配信する方針にした。
+- 2026-03-12 14:06:33 +0900 [実装] `web-src/main.js` / `notice-pdf.js` / `app.css` を追加し、`pdfme generate()` で案内PDFを組み立てて blob iframe へ表示する新プレビュー実装を作成した。
+- 2026-03-12 14:07:19 +0900 [実装] `package.json` / `vite.config.js` を bundle 構成へ更新し、`npm run build` で `web-dist/app.js` / `app.css` を固定名出力するようにした。
+- 2026-03-12 14:09:02 +0900 [実装] Rust 側の `/assets/app.css` `/assets/app.js` を `web-dist` 読み出し配信に変更。`/assets/fonts/body.ttf` `/assets/fonts/body-bold.ttf` `/assets/fonts/title.ttf` も OS 上の既知フォントから返す route を追加した。
+- 2026-03-12 14:09:31 +0900 [実装] `/issues/{id}/print` は app shell の print view を返す構成へ変更し、`/api/issues/{id}/print-pdf` は browser-side 生成が正本だと分かる 409 応答へ切り替えた。
+- 2026-03-12 14:10:02 +0900 [実装] `run-web.sh` と `watch-run-common.sh` を `npm run build` 前提へ更新。watch 対象は `web-src` / `package.json` / `package-lock.json` / `vite.config.js` とし、`web-dist` の自己再起動ループは避けた。
+- 2026-03-12 14:12:41 +0900 [検証] `npm run build` 成功。`/assets/app.js` `/assets/app.css` `/assets/fonts/body.ttf` は 200、`/api/issues/{id}/print-pdf` は browser-side 生成へ誘導する 409 を返すことを確認した。
+- 2026-03-12 14:13:22 +0900 [検証] `http://localhost:12040/issues/.../edit` と `/print` を Chrome で確認。右側は blob PDF iframe の A4 固定プレビューへ置き換わり、sample 寄りの固定紙面になった。
+- 2026-03-12 23:49:22 +0900 [コミット方針] `git status` では 38 件すべてが未追跡、`git rev-parse --verify HEAD` は失敗し初回コミット状態。topic 分割よりも「常会案内Web編集基盤の初期投入」として 1 コミットに束ねる方が履歴として自然と判断。

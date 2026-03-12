@@ -1,0 +1,11 @@
+- A background task automatically runs `cargo check`, `cargo test`, `cargo clippy`.
+
+- All error messages from that task are recorded in `build-error.txt` or `test-error.txt` or `clippy-error.txt`.
+
+- After modifying and saving any file, **wait 1 second** to allow `cargo check` to finish.  
+
+- Then, **check `build-error.txt`** and `test-error.txt` and `clippy-error.txt` to see if any errors have been logged.  
+
+- Do **not** manually execute `cargo run`, `cargo check`, or `cargo build` under any circumstances.  
+
+- 作業開始前に毎回「build-error.txtとtest-error.txtとclippy-error.txtを読もう！」と叫んでください。

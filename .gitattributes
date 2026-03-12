@@ -1,0 +1,3 @@
+*.sh eol=lf
+*.zsh eol=lf
+*.sh lf=eol

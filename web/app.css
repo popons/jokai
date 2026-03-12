@@ -1,0 +1,1024 @@
+:root {
+  --bg: #e8dccd;
+  --bg-strong: #dbc7b1;
+  --paper: #fffaf2;
+  --paper-deep: #f2e5d0;
+  --ink: #241912;
+  --muted: #756250;
+  --line: rgba(80, 49, 30, 0.18);
+  --accent: #b8562c;
+  --accent-deep: #8e3f1d;
+  --accent-soft: rgba(184, 86, 44, 0.12);
+  --pine: #314641;
+  --pine-soft: rgba(49, 70, 65, 0.1);
+  --danger: #a73528;
+  --shadow: 0 30px 80px rgba(63, 37, 22, 0.16);
+  --sheet-shadow: 0 28px 60px rgba(63, 37, 22, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body[data-print-mode="1"] {
+  background: #f3f3f3;
+}
+
+body {
+  color: var(--ink);
+  font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.35), transparent 32%),
+    radial-gradient(circle at top right, rgba(184, 86, 44, 0.14), transparent 24%),
+    linear-gradient(145deg, #efe4d6 0%, var(--bg) 46%, var(--bg-strong) 100%);
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.shell {
+  position: relative;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 18px 16px 36px;
+}
+
+.shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.3;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, transparent, black 12%, black 88%, transparent);
+}
+
+.masthead {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.brand-block {
+  max-width: 780px;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(255, 250, 242, 0.72);
+  border: 1px solid rgba(90, 56, 35, 0.12);
+  color: var(--accent-deep);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.page-title {
+  margin: 12px 0 10px;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: clamp(1.8rem, 2.8vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: 0.02em;
+}
+
+.page-lead {
+  max-width: 64ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.96rem;
+  line-height: 1.75;
+}
+
+.status-panel {
+  min-width: 250px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: rgba(255, 250, 242, 0.68);
+  border: 1px solid rgba(90, 56, 35, 0.12);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.status-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.status-kv {
+  display: grid;
+  gap: 3px;
+}
+
+.status-label {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.status-value {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.workspace {
+  display: grid;
+  gap: 14px;
+}
+
+.index-layout {
+  grid-template-columns: minmax(320px, 360px) minmax(0, 1fr);
+}
+
+.editor-layout {
+  grid-template-columns: minmax(0, 1.04fr) minmax(360px, 0.96fr);
+  align-items: start;
+}
+
+.panel {
+  position: relative;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.18)),
+    rgba(255, 250, 242, 0.74);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.28), transparent 30%, transparent 70%, rgba(184, 86, 44, 0.08));
+}
+
+.panel-inner {
+  position: relative;
+  padding: 18px;
+}
+
+.section-title {
+  margin: 0 0 6px;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 1.55rem;
+  letter-spacing: 0.03em;
+}
+
+.section-copy {
+  margin: 0 0 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.create-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.create-button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(90, 56, 35, 0.12);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(248, 238, 224, 0.92));
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.create-button:hover {
+  transform: translateY(-2px);
+  border-color: rgba(184, 86, 44, 0.34);
+  box-shadow: 0 18px 30px rgba(71, 43, 26, 0.12);
+}
+
+.create-button strong {
+  font-size: 1rem;
+}
+
+.create-button span {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.list-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.issue-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 252, 247, 0.92);
+  border: 1px solid rgba(90, 56, 35, 0.1);
+}
+
+.issue-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.issue-card-title {
+  margin: 0;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+
+.issue-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.badge--accent {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  border-color: rgba(184, 86, 44, 0.18);
+}
+
+.badge--pine {
+  background: var(--pine-soft);
+  color: var(--pine);
+  border-color: rgba(49, 70, 65, 0.2);
+}
+
+.badge--draft {
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--muted);
+  border-color: rgba(90, 56, 35, 0.12);
+}
+
+.issue-card-copy {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.75;
+}
+
+.issue-card-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.issue-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: white;
+  text-decoration: none;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.issue-link:hover {
+  background: var(--accent-deep);
+}
+
+.issue-card-stat {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.toolbar-button-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.92rem;
+}
+
+.toolbar-link:hover {
+  color: var(--accent-deep);
+}
+
+.primary-button,
+.ghost-button,
+.danger-button {
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.primary-button {
+  padding: 12px 18px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: white;
+  box-shadow: 0 12px 24px rgba(184, 86, 44, 0.24);
+}
+
+.ghost-button {
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--ink);
+  border: 1px solid rgba(90, 56, 35, 0.12);
+}
+
+.danger-button {
+  padding: 10px 14px;
+  background: rgba(167, 53, 40, 0.08);
+  color: var(--danger);
+  border: 1px solid rgba(167, 53, 40, 0.18);
+}
+
+.primary-button:hover,
+.ghost-button:hover,
+.danger-button:hover {
+  transform: translateY(-1px);
+}
+
+.primary-button:disabled,
+.ghost-button:disabled,
+.danger-button:disabled {
+  opacity: 0.54;
+  cursor: wait;
+  transform: none;
+}
+
+.flash {
+  padding: 12px 14px;
+  border-radius: 18px;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.flash--info {
+  background: rgba(49, 70, 65, 0.08);
+  color: var(--pine);
+}
+
+.flash--error {
+  background: rgba(167, 53, 40, 0.09);
+  color: var(--danger);
+}
+
+.editor-main {
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 252, 247, 0.9);
+  border: 1px solid rgba(90, 56, 35, 0.1);
+}
+
+.card-title {
+  margin: 0 0 4px;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 1.28rem;
+}
+
+.card-copy {
+  margin: 0 0 10px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.form-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.form-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field label {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(90, 56, 35, 0.12);
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.field textarea {
+  min-height: 92px;
+  line-height: 1.6;
+}
+
+.blocks-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.block-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.block-card {
+  padding: 14px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(244, 236, 224, 0.86));
+  border: 1px solid rgba(90, 56, 35, 0.11);
+}
+
+.block-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.block-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(90, 56, 35, 0.1);
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.block-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preview-column {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.preview-frame {
+  padding: 16px;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.12)),
+    rgba(85, 63, 49, 0.12);
+  border: 1px solid rgba(90, 56, 35, 0.1);
+  box-shadow: var(--shadow);
+}
+
+.upload-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  border: 1px dashed rgba(90, 56, 35, 0.18);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--accent-deep);
+  cursor: pointer;
+}
+
+.upload-slot input {
+  display: none;
+}
+
+.attachment-list {
+  display: grid;
+  gap: 8px;
+}
+
+.attachment-chip {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(90, 56, 35, 0.1);
+}
+
+.attachment-chip--active {
+  border-color: rgba(184, 86, 44, 0.34);
+  box-shadow: 0 10px 24px rgba(184, 86, 44, 0.12);
+}
+
+.attachment-preview-button,
+.attachment-delete-button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.attachment-preview-button {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  color: inherit;
+}
+
+.attachment-preview-button span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.attachment-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.attachment-delete-button {
+  color: var(--danger);
+}
+
+.preview-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+
+.preview-heading strong {
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 1.12rem;
+}
+
+.preview-sheet {
+  aspect-ratio: 1 / 1.414;
+  min-height: 74vh;
+  padding: 42px 38px;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(251, 247, 240, 0.95)),
+    var(--paper);
+  border: 1px solid rgba(90, 56, 35, 0.14);
+  box-shadow: var(--sheet-shadow);
+}
+
+.print-shell {
+  padding: 12px;
+  display: grid;
+  place-items: center;
+  background: #f3f3f3;
+}
+
+.notice-page {
+  width: min(100%, 760px);
+  min-height: calc(297mm - 20mm);
+  padding: 18px 18px 20px;
+  border-radius: 8px;
+  border: 1px solid #d7d7d7;
+  background: #fff;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.08);
+}
+
+.notice-page--embedded {
+  width: 100%;
+  min-height: unset;
+}
+
+.notice-header {
+  margin-bottom: 14px;
+}
+
+.notice-title {
+  margin: 0 0 8px;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: clamp(1.6rem, 2vw, 2.2rem);
+  line-height: 1.15;
+  letter-spacing: 0.05em;
+  color: #111;
+}
+
+.notice-summary {
+  display: grid;
+  gap: 4px;
+  font-size: 0.96rem;
+  line-height: 1.55;
+  color: #111;
+}
+
+.notice-note {
+  margin: 8px 0 0;
+  color: #d0261a;
+  font-weight: 600;
+  line-height: 1.8;
+}
+
+.notice-blocks {
+  display: grid;
+  gap: 10px;
+}
+
+.notice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 10px;
+  align-items: start;
+}
+
+.notice-row-main {
+  min-width: 0;
+}
+
+.notice-row-heading {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+.notice-index {
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+
+.notice-heading {
+  font-weight: 700;
+  line-height: 1.65;
+  color: #111;
+}
+
+.notice-body {
+  margin-top: 2px;
+  color: #111;
+  white-space: pre-wrap;
+  line-height: 1.58;
+}
+
+.notice-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.notice-inline-label {
+  color: #d0261a;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.notice-row-side {
+  display: grid;
+  gap: 6px;
+}
+
+.notice-thumb-empty {
+  color: #b64a43;
+  font-size: 0.82rem;
+  text-align: center;
+  padding-top: 6px;
+}
+
+.notice-thumb {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.notice-thumb img,
+.notice-thumb-file {
+  width: 100%;
+  min-height: 62px;
+  border-radius: 4px;
+  border: 1px solid #cfcfcf;
+  background: #fff;
+}
+
+.notice-thumb img {
+  display: block;
+  object-fit: cover;
+}
+
+.notice-thumb-file {
+  display: grid;
+  place-items: center;
+  color: #666;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+}
+
+.notice-thumb figcaption {
+  color: #d0261a;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.asset-stage {
+  min-height: 340px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(90, 56, 35, 0.12);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.asset-stage--image {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.asset-frame {
+  width: 100%;
+  min-height: 340px;
+  border: 0;
+  background: white;
+}
+
+.asset-image {
+  max-width: 100%;
+  max-height: 420px;
+  border-radius: 10px;
+  object-fit: contain;
+}
+
+.preview-doc-title {
+  margin: 0 0 20px;
+  text-align: center;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: clamp(1.9rem, 2vw, 2.4rem);
+  letter-spacing: 0.08em;
+}
+
+.preview-meta {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 22px;
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
+.preview-note {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  line-height: 1.8;
+}
+
+.preview-section-title {
+  margin: 28px 0 14px;
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 1.22rem;
+  letter-spacing: 0.05em;
+}
+
+.preview-blocks {
+  display: grid;
+  gap: 16px;
+}
+
+.preview-block {
+  display: grid;
+  gap: 8px;
+}
+
+.preview-block-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.preview-block-heading strong {
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.preview-block-body {
+  white-space: pre-wrap;
+  color: #46372c;
+  line-height: 1.82;
+  font-size: 0.96rem;
+}
+
+.preview-aux {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preview-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(49, 70, 65, 0.08);
+  color: var(--pine);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.empty-state {
+  padding: 22px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px dashed rgba(90, 56, 35, 0.16);
+  color: var(--muted);
+  line-height: 1.8;
+}
+
+.loading-shell {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+  text-align: center;
+  gap: 14px;
+}
+
+.loading-mark {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 3px solid rgba(184, 86, 44, 0.14);
+  border-top-color: var(--accent);
+  animation: spin 1s linear infinite;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1180px) {
+  .editor-layout,
+  .index-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-column {
+    position: static;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+
+  body,
+  body[data-print-mode="1"] {
+    background: white;
+  }
+
+  .print-shell {
+    padding: 0;
+  }
+
+  .notice-page,
+  .notice-page--embedded {
+    width: auto;
+    min-height: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: white;
+  }
+}
+
+@media (max-width: 760px) {
+  .shell {
+    padding-inline: 14px;
+  }
+
+  .masthead,
+  .toolbar,
+  .blocks-header,
+  .issue-card-head,
+  .issue-card-footer,
+  .preview-heading {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .form-grid--two {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-inner,
+  .preview-frame,
+  .card {
+    padding: 18px;
+  }
+
+  .preview-sheet {
+    padding: 28px 24px;
+  }
+
+  .notice-row {
+    grid-template-columns: 1fr;
+  }
+}

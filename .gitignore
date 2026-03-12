@@ -1,0 +1,11 @@
+target/
+*.txt
+?.md
+*log/
+*.swp
+.project-name
+logs/
+node_modules/
+tmp/
+web-dist/
+data/

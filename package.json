@@ -1,0 +1,20 @@
+{
+  "name": "jokai",
+  "version": "1.0.0",
+  "description": "jokai fixed-template pdf composer",
+  "scripts": {
+    "build": "vite build",
+    "build:watch": "vite build --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@pdfme/common": "^5.5.8",
+    "@pdfme/generator": "^5.5.8",
+    "@pdfme/schemas": "^5.5.8",
+    "@pdfme/ui": "^5.5.8",
+    "vite": "^7.1.7"
+  }
+}

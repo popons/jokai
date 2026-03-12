@@ -1,0 +1,31 @@
+
+default_job = "check"
+env.CARGO_TERM_COLOR = "always"
+env.RUSTFLAGS = "-Awarnings"
+
+[jobs.check]
+# command = ["cargo", "check"]
+command = [
+    "zsh",
+    "-c",
+    "cargo check --workspace --color=always 2>&1 | tee >(descseq > build-error.txt)",
+]
+need_stdout = true
+
+[jobs.clippy]
+# command = ["cargo", "clippy"]
+command = [
+    "zsh",
+    "-c",
+    "cargo clippy --workspace --all-targets --color=always 2>&1 | tee >(descseq > clippy-error.txt)",
+]
+need_stdout = true
+
+[jobs.test]
+# command = ["cargo", "test"]
+command = [
+    "zsh",
+    "-c",
+    "cargo test --workspace -- --color always 2>&1 | tee >(descseq > test-error.txt)",
+]
+need_stdout = true
