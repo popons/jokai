@@ -1,0 +1,11 @@
+# Repo-local Codex config for Jokai.
+# Retrieval is intentionally deferred until `context/` or `docs/` grows enough
+# to justify maintaining `mcp-server/registry.json`.
+
+model_reasoning_effort = "xhigh"
+
+# Future repo-local retrieval wiring:
+#
+# [mcp_servers.context-local]
+# command = "codified-context-mcp"
+# args = ["--project-root", "."]

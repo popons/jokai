@@ -54,6 +54,7 @@
 - 生成する「案内PDF」は常会案内の本体紙面のみを出力すること。
 - 添付資料の原本PDFや原本画像は、案内PDFに結合しないこと。
 - 添付資料は本体紙面ではサムネ表示のみとし、原本の閲覧やダウンロードは別導線に分離すること。
+- 最終ページ下端には footer 帯を置ける前提で組版すること。左下は任意赤字メッセージ、右下は必須連絡先ブロックを出す。
 
 # python
 
@@ -77,3 +78,61 @@ pythonコマンドないので、python3コマンドを使ってね
 - 2026-02-25 19:35:12 +0900 [$カテゴリ] デフォルトルートは`eth0(metric 100)`優先、`ppp0(metric 700)`はバックアップ経路。
 - 2026-02-25 19:36:44 +0900 [$カテゴリ] `100.75.x.x`はCGNAT帯でグローバルIPではないため、外部からの直接着信は不可。
 ```
+
+## Codex Native 運用
+
+- Codex に対する正本 instruction は `AGENTS.md`。`CLAUDE.md` は移行元の参考資料として扱い、新しい正本ルールはまず `AGENTS.md` を更新すること。
+- このプロジェクトは `Greenfield` 扱いだが、最優先原則は「紙面見た目厳守」。新機能よりも、見本紙面・プレビュー・最終PDFの整合を優先すること。
+- `context/` は深い説明の置き場所。`AGENTS.md` には作業判断に必要な短い運用ルールだけを書き、詳細は `context/*.md` に逃がすこと。
+
+## プロジェクト概要
+
+- 目的: 生産組合長向けの常会案内を作成する。
+- 技術スタック: Rust + Axum + PostgreSQL + Vite + 素の JavaScript + `pdfme`。
+- 画面/出力の正解: `docs/exmple.png`。
+- 重要な生成境界:
+  - 編集UIの常時プレビューは見本紙面と同じ見た目を保つ。
+  - 編集UIのうち印刷プレビュー以外の chrome は、余白を絞って視線移動とスクロール負荷を減らすこと。
+  - 「案内PDF」は本体紙面のみ出力する。
+  - 添付資料は紙面ではサムネのみ表示し、原本閲覧/ダウンロードは別導線に分離する。
+
+## Repo Map
+
+- `src/main.rs`: Axum エントリポイント。HTML/asset 配信、issue CRUD、添付アップロード、`pdftoppm` によるプレビュー画像化、headless Chrome による最終PDF生成を担当。
+- `web-src/main.js`: 編集画面 UI、状態管理、保存、常時プレビュー再生成、添付ビューアを担当。
+- `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計をここで守る。
+- `web-src/app.css`: 編集UIとプレビューUIの見た目。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
+- `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `attachments` / `generated_files` を定義する。
+- `web-dist/`: フロントエンドのビルド成果物。直接手編集しないこと。
+- `docs/exmple.png`: 紙面見本の唯一の正解。
+- `WORK_TIMELINE.md`: 作業時系列メモの正本。
+
+## 作業ルーティング
+
+- 紙面・段組み・余白・文字組みを触る前に、必ず `docs/exmple.png` と `context/repo-map.md` を読むこと。
+- 編集画面の操作性を触るときは、`web-src/main.js` の DOM 構造と `web-src/app.css` の gap/padding/min-height を一緒に見ること。片方だけ触ると、また間延びする。
+- プレビュー不一致を触るときは `web-src/main.js` と `src/main.rs` の `/api/preview-renders` をセットで確認すること。
+- 最終PDFの出力不具合を触るときは `src/main.rs` の `/issues/{id}/print` / `/api/issues/{id}/print-pdf` 周辺と `web-src/notice-pdf.js` の両方を確認すること。
+- DB 変更時は `db/*.sql`、`src/main.rs` のシリアライズ/保存処理、`web-src/main.js` の normalize/payload 生成を一緒に揃えること。
+
+## 既知コマンド
+
+- `npm run build`: `web-src/` から `web-dist/` を再生成する。
+- `cargo fmt`: 変更後に実行が必要。
+- `./db-init.sh` / `./db-migrate.sh` / `./db-status.sh` / `./db-reset.sh`: DB 操作用スクリプト。
+- `./watch-run-server.sh` / `./watch-all.sh`: 監視実行用スクリプト。
+- ただし Codex は上の Rust ルールを優先し、手動で `cargo run` / `cargo check` / `cargo build` / `cargo clippy` を叩かないこと。
+
+## Context Routing
+
+- `context/repo-map.md`: repo 全体の責務分界、データモデル、プレビュー経路、最終PDF経路、紙面不変条件の正本。
+- まだ repo-local retrieval は有効化しない。`context/` や `docs/` が増えて検索価値が出た段階で `mcp-server/registry.json` と `.codex/config.toml` の MCP 配線を追加すること。
+- まだ project-specific skill は作らない。まずは `AGENTS.md` と `context/` だけで十分に回せる状態を維持すること。
+
+## 保守チェック
+
+- 新しい context doc を追加したら、この `AGENTS.md` の `Context Routing` に登録すること。
+- 紙面構造を変えたら、見本 `docs/exmple.png` と差分理由を説明できる状態にすること。説明できない変更は雑音であり、原則として入れないこと。
+- 編集画面は情報密度を落としすぎないこと。header/action/card/attachment viewer の余白で作業負荷を増やす変更は避けること。
+- `pdftoppm` や headless Chrome 依存を増減させるときは、プレビュー系と最終PDF系の両方に波及する前提で確認すること。
+- 生成物と原本の境界を曖昧にしないこと。添付資料原本を案内PDFに混ぜる変更は、この repo の設計原則に反する。

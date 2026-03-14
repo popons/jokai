@@ -83,6 +83,7 @@ function normalizeIssue(issue) {
     meeting_time: issue.meeting_time || "",
     place: issue.place || "",
     header_note: issue.header_note || "",
+    footer_note: issue.footer_note || "",
     published_at: issue.published_at || "",
   };
 }
@@ -180,6 +181,7 @@ function payloadFromState() {
     meeting_time: state.issue.meeting_time,
     place: state.issue.place.trim(),
     header_note: state.issue.header_note,
+    footer_note: state.issue.footer_note,
     blocks: state.blocks.map((block) => ({
       id: block.id || "",
       block_kind: block.block_kind,
@@ -570,15 +572,15 @@ function renderEditor() {
     : `<div class="empty-state">まだ本文 section がありません。提出物や配布物の大項目を追加してください。</div>`;
 
   app.innerHTML = `
-    <main class="shell shell--wide">
-      <header class="masthead">
+    <main class="shell shell--wide shell--editor">
+      <header class="masthead masthead--editor">
         <div class="brand-block">
           <span class="eyebrow">JOKAI EDITOR</span>
           <h1 class="page-title">常会案内を編集する</h1>
           <p class="page-lead">右側の A4 正本プレビューは、実際に生成した案内PDFそのものです。</p>
         </div>
-        <aside class="status-panel">
-          <div class="status-grid">
+        <aside class="status-panel status-panel--editor">
+          <div class="status-grid status-grid--editor">
             <div class="status-kv">
               <span class="status-label">Issue</span>
               <span class="status-value">${escapeHtml(issue.id)}</span>
@@ -596,12 +598,16 @@ function renderEditor() {
       </header>
 
       <div class="editor-actions">
-        <a class="ghost-link" href="/issues">一覧へ戻る</a>
-        <span class="badge badge--accent">${escapeHtml(issueTypeLabels[issue.issue_type] || issue.issue_type)}</span>
-        <span class="badge badge--draft">${escapeHtml(issue.status)}</span>
-        <a class="ghost-link" href="/issues/${escapeHtml(issue.id)}/print" target="_blank" rel="noreferrer">印刷画面</a>
-        <button class="ghost-button" type="button" id="reload-issue-button">再読込</button>
-        <button class="primary-button" type="button" id="save-issue-button">保存する</button>
+        <div class="editor-actions-group">
+          <a class="ghost-link" href="/issues">一覧へ戻る</a>
+          <span class="badge badge--accent">${escapeHtml(issueTypeLabels[issue.issue_type] || issue.issue_type)}</span>
+          <span class="badge badge--draft">${escapeHtml(issue.status)}</span>
+        </div>
+        <div class="editor-actions-group editor-actions-group--primary">
+          <a class="ghost-link" href="/issues/${escapeHtml(issue.id)}/print" target="_blank" rel="noreferrer">印刷画面</a>
+          <button class="ghost-button" type="button" id="reload-issue-button">再読込</button>
+          <button class="primary-button" type="button" id="save-issue-button">保存する</button>
+        </div>
       </div>
 
       ${state.error ? `<div class="flash flash--error">${escapeHtml(state.error)}</div>` : ""}
@@ -613,25 +619,27 @@ function renderEditor() {
             <h2 class="card-title">号の骨格</h2>
             <p class="card-copy">タイトル、日時、場所、注記。ここが紙面の印象を決めます。</p>
             <div class="form-grid">
-              <div class="field">
-                <label>ISSUE TYPE</label>
-                <select data-issue-field="issue_type">${issueTypeOptions(issue.issue_type)}</select>
-              </div>
-              <div class="field">
-                <label>対象月</label>
-                <input data-issue-field="issue_month" type="month" value="${escapeHtml(issue.issue_month)}">
+              <div class="issue-meta-row">
+                <div class="field">
+                  <label>ISSUE TYPE</label>
+                  <select data-issue-field="issue_type">${issueTypeOptions(issue.issue_type)}</select>
+                </div>
+                <div class="field">
+                  <label>対象月</label>
+                  <input data-issue-field="issue_month" type="month" value="${escapeHtml(issue.issue_month)}">
+                </div>
+                <div class="field">
+                  <label>開催日</label>
+                  <input data-issue-field="meeting_date" type="date" value="${escapeHtml(issue.meeting_date)}">
+                </div>
+                <div class="field">
+                  <label>開始時刻</label>
+                  <input data-issue-field="meeting_time" type="time" value="${escapeHtml(issue.meeting_time)}">
+                </div>
               </div>
               <div class="field field--wide">
                 <label>タイトル</label>
                 <input data-issue-field="title" value="${escapeHtml(issue.title)}" placeholder="例: 平古場生産組合 常会の案内">
-              </div>
-              <div class="field">
-                <label>開催日</label>
-                <input data-issue-field="meeting_date" type="date" value="${escapeHtml(issue.meeting_date)}">
-              </div>
-              <div class="field">
-                <label>開始時刻</label>
-                <input data-issue-field="meeting_time" type="time" value="${escapeHtml(issue.meeting_time)}">
               </div>
               <div class="field field--wide">
                 <label>場所</label>
@@ -640,6 +648,11 @@ function renderEditor() {
               <div class="field field--wide">
                 <label>上部注記</label>
                 <textarea data-issue-field="header_note" placeholder="田祈祷、忘年会、開始時刻の訂正など">${escapeHtml(issue.header_note)}</textarea>
+              </div>
+              <div class="field field--wide">
+                <label>最終ページ左下メモ</label>
+                <textarea data-issue-field="footer_note" placeholder="★提出書類は、常会当日か10月25日(土)までに、組合長に提出して下さい">${escapeHtml(issue.footer_note)}</textarea>
+                <p class="field-hint">最終ページだけに表示されます。右下の連絡先「平古場生産組合 / 組合長 古川 豊 / ☎090-7581-7819」は毎回自動で入ります。</p>
               </div>
             </div>
           </section>

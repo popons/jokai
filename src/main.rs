@@ -177,6 +177,7 @@ struct IssueDocumentIssue {
   meeting_time: Option<String>,
   place: String,
   header_note: String,
+  footer_note: String,
   published_at: Option<String>,
 }
 
@@ -240,6 +241,8 @@ struct SaveIssuePayload {
   place: String,
   #[serde(default)]
   header_note: String,
+  #[serde(default)]
+  footer_note: String,
   #[serde(default)]
   blocks: Vec<SaveBlockPayload>,
 }
@@ -946,8 +949,9 @@ async fn fetch_issue_document(
          to_char(issue_month, 'YYYY-MM-DD'),
          to_char(meeting_date, 'YYYY-MM-DD'),
          to_char(meeting_time, 'HH24:MI'),
-       place,
+        place,
         header_note,
+        footer_note,
         to_char(published_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
        from issues
        where id::text = $1",
@@ -1068,7 +1072,8 @@ async fn fetch_issue_document(
     meeting_time: issue_row.get::<_, Option<String>>(6),
     place: issue_row.get::<_, String>(7),
     header_note: issue_row.get::<_, String>(8),
-    published_at: issue_row.get::<_, Option<String>>(9),
+    footer_note: issue_row.get::<_, String>(9),
+    published_at: issue_row.get::<_, Option<String>>(10),
   };
 
   let blocks = block_rows
@@ -1498,6 +1503,7 @@ async fn api_issue_save(
   let meeting_time = payload.meeting_time.trim().to_string();
   let place = payload.place.trim().to_string();
   let header_note = payload.header_note.trim().to_string();
+  let footer_note = payload.footer_note.trim().to_string();
   let title = payload.title.trim().to_string();
 
   state
@@ -1510,8 +1516,9 @@ async fn api_issue_save(
            meeting_date = nullif($4, '')::date,
            meeting_time = nullif($5, '')::time,
            place = $6,
-           header_note = $7
-       where id::text = $8",
+           header_note = $7,
+           footer_note = $8
+       where id::text = $9",
       &[
         &payload.issue_type,
         &title,
@@ -1520,6 +1527,7 @@ async fn api_issue_save(
         &meeting_time,
         &place,
         &header_note,
+        &footer_note,
         &issue_id,
       ],
     )

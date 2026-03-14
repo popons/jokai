@@ -20,6 +20,7 @@ create table if not exists issues (
   meeting_time time,
   place text not null default '',
   header_note text not null default '',
+  footer_note text not null default '',
   correction_of_issue_id uuid references issues(id) on delete set null,
   published_at timestamptz,
   created_at timestamptz not null default now(),

@@ -59,3 +59,55 @@
 - 2026-03-12 14:13:22 +0900 [検証] `http://localhost:12040/issues/.../edit` と `/print` を Chrome で確認。右側は blob PDF iframe の A4 固定プレビューへ置き換わり、sample 寄りの固定紙面になった。
 - 2026-03-12 23:49:22 +0900 [コミット方針] `git status` では 38 件すべてが未追跡、`git rev-parse --verify HEAD` は失敗し初回コミット状態。topic 分割よりも「常会案内Web編集基盤の初期投入」として 1 コミットに束ねる方が履歴として自然と判断。
 - 2026-03-12 23:50:47 +0900 [コミット] root commit `0030a49` を作成。件名は `feat: 常会案内の初期Web編集基盤を追加` とし、Rust/Axum API・DB migration・Web編集UI・PDF preview/build 導線・運用補助スクリプトを初期実装として一括投入した。
+- 2026-03-14 10:56:40 +0900 [codified-context] `codified-context-introduction` 開始。導入判断に必要な3質問（目的/成熟度/優先原則）をユーザーへ確認し、Greenfield・紙面見た目厳守を前提に進行開始。
+- 2026-03-14 10:57:14 +0900 [inspection] `AGENTS.md`/`CLAUDE.md` と `build-error.txt`/`test-error.txt`/`clippy-error.txt` を確認。現時点で `cargo check`・`cargo test`・`cargo clippy` は成功しており、既存ルールは Rust 実行禁止・紙面見た目厳守・`WORK_TIMELINE.md` 即時記録が中核と把握。
+- 2026-03-14 10:57:14 +0900 [inspection] `inspect_global_codex_prereqs.py` 実行でグローバル前提は充足と確認。`codified-context-mcp` 利用可、必須スキル導入済み、`multi_agent = true` 有効のためグローバル変更提案は不要。
+- 2026-03-14 10:57:14 +0900 [inspection] `scan_target_repo.py` 実行で repo 側の Codex 資産は未整備、既存 instruction は `AGENTS.md`/`CLAUDE.md` のみ、`context/` も `.codex/config.toml` も未作成と確認。`tmp/` 配下のJS多数で成熟度推定は過大寄りだが、ユーザー申告の Greenfield を優先する。
+- 2026-03-14 11:00:42 +0900 [inspection] [docs/exmple.png] の紙面見本を確認。正解は「左本文・右資料サムネ」のA4縦紙面で、右カラムは添付原本ではなくサムネ専用、本文PDFは本体紙面のみ出力という制約を Codex 文書化対象に含める判断。
+- 2026-03-14 11:00:42 +0900 [inspection] 実装の責務分界を確認。`src/main.rs` は Axum API/DB/添付保存/Chrome印刷/`pdftoppm` プレビュー変換、`web-src/main.js` は編集UIと常時プレビュー、`web-src/notice-pdf.js` は A4固定レイアウト生成、`db/*.sql` は issue/block/item/attachment/generated_files の永続化を担当。
+- 2026-03-14 11:03:02 +0900 [codified-context] `AGENTS.md` を in-place 更新し、Codex-native の repo map・作業ルーティング・保守チェックを追加。併せて `context/repo-map.md` と `.codex/config.toml` を新規作成し、retrieval は価値不足のため明示的に保留とした。
+- 2026-03-14 11:03:02 +0900 [verification] 保存後 1 秒待機し、`build-error.txt`/`test-error.txt`/`clippy-error.txt` を確認。既存の成功状態を維持。`build-error-win.txt` は未作成で存在しないだけと確認。
+- 2026-03-14 11:03:35 +0900 [verification] `cargo fmt` 実行。再度 1 秒待機のうえ `build-error.txt`/`test-error.txt`/`clippy-error.txt` を確認し、成功状態維持を確認。
+- 2026-03-14 11:04:12 +0900 [verification] 最終確認として `WORK_TIMELINE.md` 追記後も 1 秒待機し、`build-error.txt`/`test-error.txt`/`clippy-error.txt` を再確認。成功状態維持を確認。
+- 2026-03-14 11:25:36 +0900 [maintenance] `$codified-context-maintenance` 開始。ユーザー要望は edit 画面の非印刷UIの余白最小化で、必要なら HTML/CSS 観点の sub-agent を使いながら実装後に Codex 文書を追従させる方針に切替。
+- 2026-03-14 11:26:26 +0900 [inspection] `inspect_codified_context_changes.py` では既存 Codex 資産変更のみで追加推奨なしと確認。`web-src/app.css` / `web-src/main.js` と localhost 画面を確認し、上部ヘッダー高さ・カード内 padding・フォーム gap・左右カラム間隔が累積してスクロール増大の主因と判断。
+- 2026-03-14 11:26:26 +0900 [implementation] edit 画面の密度改善として `web-src/main.js` に `shell--editor` を付与し、`web-src/app.css` で editor 専用の masthead / status grid / action-row 配置を詰める調整を追加。併せて `context/repo-map.md` に「非印刷 editor UI は gap と操作近接を優先する」知見を反映。
+- 2026-03-14 11:25:36 +0900 [maintenance] ユーザー要望「編集画面の余白最小化」と `$codified-context-maintenance` を受領。作業開始時に `build-error.txt`/`test-error.txt`/`clippy-error.txt` を再確認し、成功状態を確認。
+- 2026-03-14 11:26:04 +0900 [maintenance] HTML/CSS 観点の sub-agent を起動し、`/issues/c31a1785-b841-49b4-9608-5c5ad8f9b3c5/edit` の非印刷UIに対する余白圧縮案のレビューを並行依頼。
+- 2026-03-14 11:26:04 +0900 [inspection] `inspect_codified_context_changes.py` を実行。現時点の差分は `AGENTS.md`/`context/repo-map.md`/`.codex/config.toml`/`WORK_TIMELINE.md` のみで、source 未変更につき maintenance script からの追加アクション提案はなし。
+- 2026-03-14 11:26:04 +0900 [inspection] Chrome DevTools で編集画面を実測。viewport 2312x1650 に対し `masthead` 高さ 186px、`editor-actions` が全幅分散、全体 scroll 高さ 3082px。スクリーンショット上も header と card 内余白の過多を確認。
+- 2026-03-14 11:31:40 +0900 [実装] `web-src/main.js` で editor action を左右グループ化し、status panel に compact class を付与。`web-src/app.css` で shell/card/form/action/attachment viewer の gap・padding・min-height を圧縮し、非印刷UIの縦横の散りを削減。
+- 2026-03-14 11:31:40 +0900 [実装] `npm run build` 実行で `web-dist/app.css` / `web-dist/app.js` を更新。Vite build は成功、bundle size warning のみ継続。
+- 2026-03-14 11:31:40 +0900 [検証] Chrome DevTools 再測定で `masthead` 高さ 186px→98px、全体 scroll 高さ 3082px→2484px、attachment viewer panel 高さ 1366px→311px に縮小。viewport screenshot でも header/action/card の余白圧縮を確認。
+- 2026-03-14 11:31:40 +0900 [maintenance] `AGENTS.md` と `context/repo-map.md` に「印刷プレビュー以外の編集UIは余白を絞って高密度を保つ」旨を追記し、今回の知見を codified-context へ反映。
+- 2026-03-14 11:35:15 +0900 [実装] ユーザー追加要望により `web-src/app.css` を再圧縮。input/select/date/time を 50px級→40px 高さへ、textarea を 80px→64px へ縮小し、card/panel/gap/button も一段詰めた。
+- 2026-03-14 11:35:15 +0900 [検証] `npm run build` 成功後に Chrome DevTools 再測定。desktop 幅で scroll 高さ 2484px→2168px、`editor-actions` 高さ 38px→34px、先頭 card 高さ 493px→417px、form controls は padding 10x12→7x10 へ縮小を確認。
+- 2026-03-14 11:38:01 +0900 [実装] ユーザー追加要望「横幅も広すぎる」に対応し、`web-src/app.css` の `.shell--wide` 最大幅を 1960px→1500px へ縮小。巨大モニタで editor/workspace が横へ伸びすぎるのを抑制した。
+- 2026-03-14 11:38:01 +0900 [検証] `npm run build` 成功後に Chrome DevTools を 2200px 幅で再確認。`.shell` 幅は 1500px で頭打ち、先頭 card 幅 780px、preview panel 幅 840px で中央寄せ表示となり、横方向の視線移動が抑制された。
+- 2026-03-14 11:44:39 +0900 [inspection] 色味の参照として `timg_01KKN3EYAQWP8FG7KJY03DW85H.png` を取得・確認。方向性は「白ベース + 青灰ライン + 紺/青アクセント」で、現行のベージュ/橙系から寒色寄りへ全面移行する判断。
+- 2026-03-14 11:47:11 +0900 [実装] `web-src/app.css` の色変数と主要面の背景を更新。暖色系の `--bg`/`--accent`/button/field/panel 色を、白ベース + 青灰ライン + 紺/青アクセントへ置換した。
+- 2026-03-14 11:47:11 +0900 [検証] `npm run build` 成功後に editor を再読込し、viewport screenshot でベージュ/橙が消えたことを確認。CSS 変数は `--accent=#5b7cf0`, `--accent-deep=#314a8b`, `--bg=#edf3fb` に更新済み。
+- 2026-03-14 11:51:11 +0900 [実装] `web-src/main.js` に `issue-meta-row` を導入し、`ISSUE TYPE`/`対象月`/`開催日`/`開始時刻` を `号の骨格` 先頭で同一行へ集約。`web-src/app.css` で4カラム grid を追加し、文字の薄さ対策として `body` weight 500、input/select/textarea weight 600、label weight 700 へ引き上げた。
+- 2026-03-14 11:51:11 +0900 [検証] `npm run build` 後の DevTools 計測で `.issue-meta-row` の4子要素 top 座標が全て 251px で一致し、`allSameRow=true` を確認。文字も `bodyWeight=500`, `inputWeight=600`, `--muted=#53627d` へ更新済み。
+- 2026-03-14 12:36:49 +0900 [実装] PDF 本文見出しの `1 3月度提出物` が `13月` に見える問題へ対応し、`web-src/notice-pdf.js` の section heading を `${index + 1}. ${heading}` へ変更。数字と本文の境界をピリオドで明示した。
+- 2026-03-14 12:36:49 +0900 [検証] `npm run build` 後に editor を再読込し、プレビュー本文が `1. 3月度提出物` と表示されることを確認。DevTools の `previewText` 取得でも `1. 3月度提出物` を確認。
+- 2026-03-14 12:44:27 +0900 [inspection] footer 要件の参考画像を確認。追加したい要素は最下段左の任意赤字メッセージと、最下段右の連絡先ブロック。現行 `web-src/notice-pdf.js` は footer 領域を持たず、本文は最下端 16mm 付近まで使用、`次頁へ続く` も下端に置く設計と把握。
+- 2026-03-14 12:44:27 +0900 [inspection] データモデル側では `issues` に footer 用カラムが未存在で、UI/保存/取得は `title`/`issue_month`/`meeting_time`/`place`/`header_note` まで。footer 実装には issue-level の新規フィールド追加と pagination の下端予約が必要と判断。
+- 2026-03-14 12:44:27 +0900 [inspection] 最下段 footer の要件を詳細化。左下は任意の赤字メッセージ、右下は毎回必須の連絡先ブロックで、いずれも「各案内の最終ページだけ」に表示する仕様として整理。実装上は最終ページ専用 footer 帯を予約し、本文 overflow 時は前段で改ページさせる必要がある。
+- 2026-03-14 12:44:27 +0900 [実装] `db/003_issue_footer.sql` を追加し、`issues.footer_note` を新設。`src/main.rs` の issue 取得/保存モデル、`web-src/main.js` の editor state/payload、`web-src/notice-pdf.js` の最終ページ footer 組版、`AGENTS.md`/`context/repo-map.md` を更新した。
+- 2026-03-14 12:44:27 +0900 [検証] 静的 build と `cargo check`/`cargo test`/`cargo clippy` は成功。`notice-pdf.js` には最終ページ footer 組版ロジックと固定右下連絡先が反映済み。
+- 2026-03-14 12:44:27 +0900 [制約] 現在稼働中の `http://localhost:12040` API からは `footer_note` がまだ返っておらず、server/migration 未反映の旧実装と判断。`psql` 不在かつ repo ルール上 `cargo run` 不可のため、この場でDB反映とserver再起動までは未実施。
+- 2026-03-14 13:12:21 +0900 [調査] 実ページの console/network を再確認。`/api/issues/c31a1785-b841-49b4-9608-5c5ad8f9b3c5` は `500 db error` を返却しており、loading 画面停止の直接原因は `issues.footer_note` 未反映の DB schema mismatch と判断。
+- 2026-03-14 13:30:36 +0900 [対応] `./target/debug/jokai db migrate --database-url postgresql://postgres:postgres@10.0.0.100:5432/jokai --admin-database-url postgresql://postgres:postgres@10.0.0.100:5432/postgres --storage-dir data` を実行し、`003_issue_footer.sql` を適用。`/api/issues/...` は `200 OK` へ復旧し、editor に `最終ページ左下メモ` が表示されることを確認。
+- 2026-03-14 13:30:36 +0900 [検証] footer 実装の live preview を再確認。`平古場生産組合 / 組合長 古川 豊 / ☎090-7581-7819` は表示されるが、preview は依然 2 ページ生成で、連絡先は独立した 2 ページ目上部へ飛ぶ不具合を確認。footer の座標/ページ扱いに未解決の不整合あり。
+- 2026-03-14 13:41:23 +0900 [調査] live preview を深掘りし、2 ページ目はほぼ空で右上寄りに連絡先だけ出ることを確認。`notice-pdf.js` では最終ページの footer 領域を pagination に反映しておらず、右 footer は `wrapText()` によるブラウザフォント推定と実際の PDF 埋め込みフォントの差で overflow し、pdfme 側で別ページへ送られている可能性が高いと判断。
+- 2026-03-14 13:56:58 +0900 [調査] ユーザー提示画像 `timg_01KKNB2P7C72FDHKW6CJF25RC0.png` を確認。右下連絡先は「全部が2ページ目へ飛ぶ」のではなく、1行目 `平古場生産組合` だけが1ページ目下端に残り、2行目 `組合長 古川 豊` と3行目 `090-7581-7819` が2ページ目上部へ落ちている。
+- 2026-03-14 13:56:58 +0900 [分析] 現在の `addFinalPageFooter()` は連絡先を3つの独立 text schema として追加しており、症状も schema 単位で分断している。これは footer ブロック全体の単純座標ズレではなく、各 schema が個別に pdfme のページ境界判定へ掛かっている不具合と判断。
+- 2026-03-14 13:56:58 +0900 [検証] `http://localhost:12040/issues/c31a1785-b841-49b4-9608-5c5ad8f9b3c5/edit` の live preview DOM では `.pdf-preview-image` が2件で、プレビューAPI由来の重複描画ではなく生成PDF自体が2ページ化していることを再確認。`body` には連絡先3行が全て存在する。
+- 2026-03-14 14:11:14 +0900 [解析] `/assets/app.js` の `buildNoticePdfDocument()` をブラウザ内で直接呼ぶと template は1ページだった一方、同 bytes を `/api/preview-renders` に掛けると2ページ化した。`buildTemplate()` ではなく PDF生成後の footer box 配置が原因と確定。
+- 2026-03-14 14:11:14 +0900 [解析] 右下 footer を runtime 実験で切り分けた結果、`平古場生産組合` 単独では1ページ、`組合長 古川 豊` と `090-7581-7819` を含むと2ページ。footer schema 全体を 3.9mm 以上上へずらすと1ページへ戻った。
+- 2026-03-14 14:11:14 +0900 [原因] `BLANK_A4_PDF` は下端に 10mm padding を持つが、footer は `FOOTER_BOTTOM_MARGIN_MM=6.5` のまま置いていた。`footer-contact` の各 box 高さ `lineHeightMm + 0.4` により 2行目・3行目の box bottom が 287mm 安全線を越え、次ページへ送られていた。
+- 2026-03-14 14:11:14 +0900 [修正] `web-src/notice-pdf.js` の footer 下限を `BLANK_A4_PDF.padding[2] + 0.6mm` ベースへ変更。blank page の下 padding 内へ footer box が食い込まないようにした。
+- 2026-03-14 14:11:14 +0900 [ビルド] `npm run build` を実行し `web-dist/app.js` / `web-dist/app.css` を更新。`cargo fmt` も実行済み。
+- 2026-03-14 14:12:47 +0900 [検証] live preview を再読込し `.pdf-preview-image` が 2 件→1 件へ減少したことを確認。右下連絡先 3 行は同一ページ内に残り、分断は解消。
+- 2026-03-14 14:12:47 +0900 [検証] `平古場生産組合 3月度常会の案内 (2).pdf` を再出力し `pdfinfo` で `Pages: 1` を確認。`pdftotext -layout` でも連絡先 3 行が同一ページ末尾へ並んでいる。

@@ -13,6 +13,22 @@ const BODY_BOLD_FONT_NAME = "JokaiBodyBold";
 const TITLE_FONT_NAME = "JokaiTitle";
 const COLOR_BLACK = "#111111";
 const COLOR_RED = "#d0261a";
+const FOOTER_CONTACT_LINES = ["平古場生産組合", "組合長　古川 豊", "☎090-7581-7819"];
+const FOOTER_GAP_ABOVE_MM = 4.5;
+const BLANK_PAGE_PADDING_BOTTOM_MM = Array.isArray(BLANK_A4_PDF.padding)
+  ? Number(BLANK_A4_PDF.padding[2] || 0)
+  : 0;
+// Keep footer boxes above pdfme's blank-page bottom padding.
+const FOOTER_BOX_SLACK_MM = 0.6;
+const FOOTER_BOTTOM_MARGIN_MM = BLANK_PAGE_PADDING_BOTTOM_MM + FOOTER_BOX_SLACK_MM;
+const FOOTER_LEFT_X = 14;
+const FOOTER_LEFT_WIDTH = 128;
+const FOOTER_RIGHT_X = 152;
+const FOOTER_RIGHT_WIDTH = 42;
+const FOOTER_NOTE_FONT_SIZE = 9;
+const FOOTER_NOTE_LINE_HEIGHT = 1.22;
+const FOOTER_CONTACT_FONT_SIZE = 8.6;
+const FOOTER_CONTACT_LINE_HEIGHT = 1.22;
 const PLUGINS = {
   Text: text,
   Image: image,
@@ -33,6 +49,13 @@ function ptToPx(value) {
 
 function pxToMm(value) {
   return value / MM_TO_PX;
+}
+
+function textBlockHeightMm(fontSizePt, lineHeight, lineCount) {
+  if (!lineCount) {
+    return 0;
+  }
+  return pxToMm(ptToPx(fontSizePt) * lineHeight * lineCount);
 }
 
 function svgDataUrl(label, accent = "#c9c9c9") {
@@ -303,6 +326,93 @@ function createPageTemplate() {
   return [];
 }
 
+function computeFooterLayout(issue) {
+  const noteText = normalizeText(issue.footer_note);
+  const noteBlock = wrapText(noteText, {
+    widthMm: FOOTER_LEFT_WIDTH,
+    fontSizePt: FOOTER_NOTE_FONT_SIZE,
+    lineHeight: FOOTER_NOTE_LINE_HEIGHT,
+    fontFamily: BODY_FONT_FAMILY,
+  });
+  const noteLines = noteBlock.lines || [];
+  const contactHeight = textBlockHeightMm(
+    FOOTER_CONTACT_FONT_SIZE,
+    FOOTER_CONTACT_LINE_HEIGHT,
+    FOOTER_CONTACT_LINES.length,
+  );
+  const contentHeight = Math.max(noteBlock.heightMm, contactHeight, 0);
+  return {
+    noteText,
+    noteLines,
+    noteHeight: noteBlock.heightMm,
+    contactHeight,
+    contentHeight,
+    reservedHeight: FOOTER_GAP_ABOVE_MM + contentHeight + FOOTER_BOTTOM_MARGIN_MM,
+    footerTop: A4_HEIGHT_MM - FOOTER_BOTTOM_MARGIN_MM - contentHeight,
+  };
+}
+
+function contentBottomLimit(footerLayout) {
+  return A4_HEIGHT_MM - footerLayout.reservedHeight;
+}
+
+function addContinuationMarker(page) {
+  page.push(
+    createTextSchema({
+      name: `continued-${page.length}`,
+      x: 16,
+      y: A4_HEIGHT_MM - 12,
+      width: 40,
+      height: 4,
+      content: "次頁へ続く",
+      fontSize: 8,
+      fontName: BODY_BOLD_FONT_NAME,
+      fontColor: COLOR_RED,
+    }),
+  );
+}
+
+function addFinalPageFooter(page, issue, footerLayout) {
+  const noteText = normalizeText(issue.footer_note);
+  if (noteText) {
+    page.push(
+      createTextSchema({
+        name: `footer-note-${page.length}`,
+        x: FOOTER_LEFT_X,
+        y: footerLayout.footerTop + Math.max(0, footerLayout.contentHeight - footerLayout.noteHeight),
+        width: FOOTER_LEFT_WIDTH,
+        height: footerLayout.noteHeight + 0.5,
+        content: noteText,
+        fontName: BODY_BOLD_FONT_NAME,
+        fontSize: FOOTER_NOTE_FONT_SIZE,
+        lineHeight: FOOTER_NOTE_LINE_HEIGHT,
+        fontColor: COLOR_RED,
+      }),
+    );
+  }
+
+  const lineHeightMm = textBlockHeightMm(FOOTER_CONTACT_FONT_SIZE, FOOTER_CONTACT_LINE_HEIGHT, 1);
+  const contactTop =
+    footerLayout.footerTop + Math.max(0, footerLayout.contentHeight - footerLayout.contactHeight);
+
+  FOOTER_CONTACT_LINES.forEach((line, index) => {
+    page.push(
+      createTextSchema({
+        name: `footer-contact-${page.length}`,
+        x: FOOTER_RIGHT_X,
+        y: contactTop + lineHeightMm * index,
+        width: FOOTER_RIGHT_WIDTH,
+        height: lineHeightMm + 0.4,
+        content: line,
+        fontName: BODY_BOLD_FONT_NAME,
+        fontSize: FOOTER_CONTACT_FONT_SIZE,
+        lineHeight: FOOTER_CONTACT_LINE_HEIGHT,
+        alignment: "right",
+      }),
+    );
+  });
+}
+
 function addFirstPageHeader(page, issue) {
   const title = normalizeText(issue.title) || "平古場生産組合　常会の案内";
   page.push(
@@ -438,7 +548,8 @@ function normalizeItemRows(block) {
 }
 
 function computeSectionHeadingGeometry(block, index) {
-  const titleBlock = wrapText(`${index + 1} ${block.heading || labelForBlockKind(block.block_kind)}`, {
+  const sectionTitle = `${index + 1}. ${block.heading || labelForBlockKind(block.block_kind)}`;
+  const titleBlock = wrapText(sectionTitle, {
     widthMm: 128,
     fontSizePt: 10.8,
     lineHeight: 1.18,
@@ -446,7 +557,7 @@ function computeSectionHeadingGeometry(block, index) {
   });
   return {
     height: Math.max(titleBlock.heightMm + 0.8, 5.8),
-    content: `${index + 1} ${block.heading || labelForBlockKind(block.block_kind)}`,
+    content: sectionTitle,
   };
 }
 
@@ -605,6 +716,7 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop) {
 }
 
 function buildTemplate(issue, blocks, attachmentAssets) {
+  const footerLayout = computeFooterLayout(issue);
   const pages = [];
   let page = createPageTemplate();
   pages.push(page);
@@ -620,19 +732,7 @@ function buildTemplate(issue, blocks, attachmentAssets) {
       4;
     const remaining = A4_HEIGHT_MM - 16 - cursorY;
     if (remaining < estimatedFirstRow && index > 0) {
-      page.push(
-        createTextSchema({
-          name: `continued-${page.length}`,
-          x: 16,
-          y: A4_HEIGHT_MM - 12,
-          width: 40,
-          height: 4,
-          content: "次頁へ続く",
-          fontSize: 8,
-          fontName: BODY_BOLD_FONT_NAME,
-          fontColor: COLOR_RED,
-        }),
-      );
+      addContinuationMarker(page);
       page = createPageTemplate();
       pages.push(page);
       cursorY = addContinuationHeader(page, issue, pages.length) + 2;
@@ -644,19 +744,7 @@ function buildTemplate(issue, blocks, attachmentAssets) {
       const assets = attachmentAssets.get(attachmentAssetKey(block, item)) || [];
       const rowHeight = computeItemGeometry(item, assets, itemIndex).rowHeight;
       if (A4_HEIGHT_MM - 16 - cursorY < rowHeight && itemIndex > 0) {
-        page.push(
-          createTextSchema({
-            name: `continued-${page.length}`,
-            x: 16,
-            y: A4_HEIGHT_MM - 12,
-            width: 40,
-            height: 4,
-            content: "次頁へ続く",
-            fontSize: 8,
-            fontName: BODY_BOLD_FONT_NAME,
-            fontColor: COLOR_RED,
-          }),
-        );
+        addContinuationMarker(page);
         page = createPageTemplate();
         pages.push(page);
         cursorY = addContinuationHeader(page, issue, pages.length) + 2;
@@ -684,6 +772,8 @@ function buildTemplate(issue, blocks, attachmentAssets) {
       }),
     );
   }
+
+  addFinalPageFooter(page, issue, footerLayout);
 
   return {
     basePdf: BLANK_A4_PDF,
