@@ -114,3 +114,16 @@
 - 2026-03-14 14:39:35 +0900 [実装] `web-src/main.js` に編集画面専用の `Ctrl+P` / `Cmd+P` ハンドラを追加。編集画面ではブラウザ既定印刷を抑止し、未保存変更があれば先に `saveEditor()` 成功を待ってから `/issues/{id}/print` へ遷移するようにした。
 - 2026-03-14 14:39:35 +0900 [実装] `saveEditor()` を真偽値返却へ整理し、ショートカット経由でも保存失敗時に印刷画面へ進まないようにした。
 - 2026-03-14 14:39:35 +0900 [ビルド] `npm run build` で `web-dist/app.js` を更新。`cargo fmt` も実行済み。
+- 2026-03-14 15:06:11 +0900 [maintenance] `codified-context-maintenance` と inspect script を実行。worktree 差分は空だったが、直近コミット済みの `Ctrl+P` 印刷導線変更は repo-wide の再利用知識と判断した。
+- 2026-03-14 15:06:11 +0900 [maintenance] `AGENTS.md` の作業ルーティングへ「編集画面の印刷導線は browser 既定印刷ではなく `/issues/{id}/print` を確認する」旨を追記。
+- 2026-03-14 15:06:11 +0900 [maintenance] `context/repo-map.md` の Editing Flow / Final PDF Flow に、編集画面の `Ctrl+P` / `Cmd+P` は必要なら保存を挟んで `/print` へ遷移する実動線を反映。
+- 2026-03-14 15:11:17 +0900 [調査] codified-context-maintenance 開始。まず build/test エラー記録と repo 差分、主要文書を確認する。
+- 2026-03-14 15:11:36 +0900 [調査] 差分中の AGENTS.md / context/repo-map.md と主要実装を読み、実態との整合を確認開始。
+- 2026-03-14 15:11:50 +0900 [調査] 実装の主要経路を精読開始。紙面生成、プレビュー、印刷、DB 境界の整合を確認する。
+- 2026-03-14 15:12:11 +0900 [調査] 見本紙面を確認。左本文高密度・右サムネ細列・footer 予約の実装根拠を追跡中。
+- 2026-03-14 15:13:05 +0900 [発見] context の最終PDF経路説明が実装と不一致。`/api/issues/{id}/print-pdf` は実質廃止で、生成は browser-side `pdfme` に寄っている。
+- 2026-03-14 15:15:16 +0900 [判断] React/TSX 用 agent は現状スタック不一致のため不要と判断。pdfme と紙面不変条件に特化した project-specific skill 導入の要否を精査する。
+- 2026-03-14 15:15:53 +0900 [判断] project-specific skill は pdfme/紙面整合専用のみ導入する方針。React/TSX 系は現行スタック外のため見送る。
+- 2026-03-14 15:17:06 +0900 [更新] jokai-pdfme-layout skill を追加し、AGENTS の Context Routing を現状スタックに合わせて更新。
+- 2026-03-14 15:18:20 +0900 [作業] コミット前の差分確認を開始。codified context 更新と pdfme skill 追加を1コミットでまとめられるか精査する。
+- 2026-03-14 15:18:42 +0900 [作業] codified context 補正と pdfme 専用 skill 追加を1コミットでまとめる方針を確定。

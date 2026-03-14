@@ -98,11 +98,11 @@ pythonコマンドないので、python3コマンドを使ってね
 
 ## Repo Map
 
-- `src/main.rs`: Axum エントリポイント。HTML/asset 配信、issue CRUD、添付アップロード、`pdftoppm` によるプレビュー画像化、headless Chrome による最終PDF生成を担当。
+- `src/main.rs`: Axum エントリポイント。HTML/asset 配信、issue CRUD、添付アップロード、`pdftoppm` によるプレビュー画像化、`/issues/{id}/print` の印刷 shell 配信を担当。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
 - `web-src/main.js`: 編集画面 UI、状態管理、保存、常時プレビュー再生成、添付ビューアを担当。
 - `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計をここで守る。
 - `web-src/app.css`: 編集UIとプレビューUIの見た目。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
-- `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `attachments` / `generated_files` を定義する。
+- `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `attachments` / `generated_files` を定義する。`generated_files` は legacy な server-side PDF 経路の名残でもある。
 - `web-dist/`: フロントエンドのビルド成果物。直接手編集しないこと。
 - `docs/exmple.png`: 紙面見本の唯一の正解。
 - `WORK_TIMELINE.md`: 作業時系列メモの正本。
@@ -112,7 +112,8 @@ pythonコマンドないので、python3コマンドを使ってね
 - 紙面・段組み・余白・文字組みを触る前に、必ず `docs/exmple.png` と `context/repo-map.md` を読むこと。
 - 編集画面の操作性を触るときは、`web-src/main.js` の DOM 構造と `web-src/app.css` の gap/padding/min-height を一緒に見ること。片方だけ触ると、また間延びする。
 - プレビュー不一致を触るときは `web-src/main.js` と `src/main.rs` の `/api/preview-renders` をセットで確認すること。
-- 最終PDFの出力不具合を触るときは `src/main.rs` の `/issues/{id}/print` / `/api/issues/{id}/print-pdf` 周辺と `web-src/notice-pdf.js` の両方を確認すること。
+- 最終PDFの出力不具合を触るときは、まず `web-src/main.js` の `downloadNoticePdf` / `openPrintPageFromEditor` と `web-src/notice-pdf.js` を確認し、印刷 shell は `src/main.rs` の `/issues/{id}/print` を見ること。`/api/issues/{id}/print-pdf` は廃止メッセージを返す互換導線。
+- 編集画面の印刷導線を触るときは、`web-src/main.js` の `Ctrl+P` / `Cmd+P` ハンドラと `/issues/{id}/print` への遷移を確認すること。editor 自体を browser 既定印刷へ流さないのが前提。
 - DB 変更時は `db/*.sql`、`src/main.rs` のシリアライズ/保存処理、`web-src/main.js` の normalize/payload 生成を一緒に揃えること。
 
 ## 既知コマンド
@@ -126,13 +127,14 @@ pythonコマンドないので、python3コマンドを使ってね
 ## Context Routing
 
 - `context/repo-map.md`: repo 全体の責務分界、データモデル、プレビュー経路、最終PDF経路、紙面不変条件の正本。
+- `.agents/skills/jokai-pdfme-layout/SKILL.md`: `pdfme` 紙面、見本差分、プレビュー/最終PDF不一致、footer 帯、右サムネ列、`Ctrl+P` / `印刷画面` / `案内PDFを出力` の導線を触るときに使う。
 - まだ repo-local retrieval は有効化しない。`context/` や `docs/` が増えて検索価値が出た段階で `mcp-server/registry.json` と `.codex/config.toml` の MCP 配線を追加すること。
-- まだ project-specific skill は作らない。まずは `AGENTS.md` と `context/` だけで十分に回せる状態を維持すること。
+- React / TSX 用の project-specific skill はまだ作らない。現行フロントは素の JavaScript なので、スタックが入ってから追加判断すること。
 
 ## 保守チェック
 
 - 新しい context doc を追加したら、この `AGENTS.md` の `Context Routing` に登録すること。
 - 紙面構造を変えたら、見本 `docs/exmple.png` と差分理由を説明できる状態にすること。説明できない変更は雑音であり、原則として入れないこと。
 - 編集画面は情報密度を落としすぎないこと。header/action/card/attachment viewer の余白で作業負荷を増やす変更は避けること。
-- `pdftoppm` や headless Chrome 依存を増減させるときは、プレビュー系と最終PDF系の両方に波及する前提で確認すること。
+- `pdftoppm` 依存を触るときはプレビュー系へ波及する前提で確認すること。headless Chrome 系コードは legacy なので、復活・削除・再配線は本線仕様を確認してから触ること。
 - 生成物と原本の境界を曖昧にしないこと。添付資料原本を案内PDFに混ぜる変更は、この repo の設計原則に反する。
