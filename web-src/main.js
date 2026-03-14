@@ -44,6 +44,7 @@ const state = {
 };
 
 const itemIndexLabels = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫"];
+let printShortcutPending = false;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -196,6 +197,10 @@ function payloadFromState() {
       })),
     })),
   };
+}
+
+function printPageUrl(issueId = state.issue?.id || boot.issueId) {
+  return `/issues/${encodeURIComponent(issueId || "")}/print`;
 }
 
 function allAttachments() {
@@ -1119,6 +1124,9 @@ async function loadPrint() {
 }
 
 async function saveEditor() {
+  if (!boot.issueId || state.saving) {
+    return false;
+  }
   state.saving = true;
   state.error = "";
   state.notice = "";
@@ -1133,11 +1141,35 @@ async function saveEditor() {
     ensureSelectedAttachment();
     state.dirty = false;
     state.notice = "保存しました。";
+    return true;
   } catch (error) {
     state.error = error.message;
+    return false;
   } finally {
     state.saving = false;
     renderEditor();
+  }
+}
+
+async function openPrintPageFromEditor() {
+  if (boot.view !== "edit" || printShortcutPending) {
+    return;
+  }
+  if (!state.issue?.id && !boot.issueId) {
+    return;
+  }
+
+  printShortcutPending = true;
+  try {
+    if (state.dirty) {
+      const saved = await saveEditor();
+      if (!saved) {
+        return;
+      }
+    }
+    window.location.href = printPageUrl();
+  } finally {
+    printShortcutPending = false;
   }
 }
 
@@ -1146,6 +1178,18 @@ window.addEventListener("beforeunload", (event) => {
     event.preventDefault();
     event.returnValue = "";
   }
+});
+
+window.addEventListener("keydown", (event) => {
+  const isPrintShortcut =
+    (event.ctrlKey || event.metaKey) &&
+    !event.altKey &&
+    String(event.key || "").toLowerCase() === "p";
+  if (!isPrintShortcut || boot.view !== "edit") {
+    return;
+  }
+  event.preventDefault();
+  void openPrintPageFromEditor();
 });
 
 if (boot.view === "edit" && boot.issueId) {
