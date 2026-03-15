@@ -2,7 +2,7 @@
 
 use axum::{
   Json, Router,
-  extract::{Multipart, Path as RoutePath, State},
+  extract::{DefaultBodyLimit, Multipart, Path as RoutePath, State},
   http::{StatusCode, header},
   response::{Html, IntoResponse},
   routing::{delete, get},
@@ -2186,6 +2186,8 @@ async fn run_web(args: WebArgs) -> Result<()> {
       "/api/attachments/{id}/thumbnail",
       get(api_attachment_thumbnail),
     )
+    // Reference PDFs can exceed axum's default 2 MiB body limit.
+    .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
     .with_state(state);
 
   let listener = TcpListener::bind(bind)

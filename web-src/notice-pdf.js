@@ -29,6 +29,23 @@ const FOOTER_NOTE_FONT_SIZE = 9;
 const FOOTER_NOTE_LINE_HEIGHT = 1.22;
 const FOOTER_CONTACT_FONT_SIZE = 8.6;
 const FOOTER_CONTACT_LINE_HEIGHT = 1.22;
+export const PAPER_FONT_SCALE_ORDER = Object.freeze([
+  "title",
+  "header",
+  "h1",
+  "h2",
+  "body",
+  "footer",
+]);
+export const PAPER_FONT_SCALE_DEFAULT_PERCENT = 80;
+export const PAPER_FONT_SCALE_LIMITS = Object.freeze({
+  min: 70,
+  max: 150,
+  step: 5,
+});
+export const PAPER_FONT_SCALE_DEFAULTS = Object.freeze(
+  Object.fromEntries(PAPER_FONT_SCALE_ORDER.map((category) => [category, PAPER_FONT_SCALE_DEFAULT_PERCENT])),
+);
 const PLUGINS = {
   Text: text,
   Image: image,
@@ -56,6 +73,86 @@ function textBlockHeightMm(fontSizePt, lineHeight, lineCount) {
     return 0;
   }
   return pxToMm(ptToPx(fontSizePt) * lineHeight * lineCount);
+}
+
+function clampPaperFontScaleValue(value) {
+  const rounded =
+    Math.round(Number(value || PAPER_FONT_SCALE_DEFAULT_PERCENT) / PAPER_FONT_SCALE_LIMITS.step) *
+    PAPER_FONT_SCALE_LIMITS.step;
+  return Math.min(PAPER_FONT_SCALE_LIMITS.max, Math.max(PAPER_FONT_SCALE_LIMITS.min, rounded));
+}
+
+export function normalizePaperFontScale(raw = {}) {
+  return Object.fromEntries(
+    PAPER_FONT_SCALE_ORDER.map((category) => [
+      category,
+      clampPaperFontScaleValue(raw?.[category] ?? PAPER_FONT_SCALE_DEFAULTS[category]),
+    ]),
+  );
+}
+
+function paperFontScaleFactor(fontScale, category) {
+  return (fontScale[category] || PAPER_FONT_SCALE_DEFAULT_PERCENT) / PAPER_FONT_SCALE_DEFAULT_PERCENT;
+}
+
+function scalePaperFont(fontScale, category, baseFontSize) {
+  return Number((baseFontSize * paperFontScaleFactor(fontScale, category)).toFixed(2));
+}
+
+function buildPaperTypography(fontScaleInput) {
+  const fontScale = normalizePaperFontScale(fontScaleInput);
+  return {
+    fontScale,
+    title: {
+      primary: scalePaperFont(fontScale, "title", 15.5),
+      continuation: scalePaperFont(fontScale, "title", 11.8),
+      lineHeight: 1.1,
+    },
+    header: {
+      meeting: scalePaperFont(fontScale, "header", 9.4),
+      place: scalePaperFont(fontScale, "header", 8.8),
+      note: scalePaperFont(fontScale, "header", 8.6),
+      lineHeight: {
+        meeting: 1.3,
+        place: 1.2,
+        note: 1.25,
+      },
+    },
+    h1: {
+      main: scalePaperFont(fontScale, "h1", 12),
+      section: scalePaperFont(fontScale, "h1", 10.8),
+      lineHeight: {
+        main: 1.1,
+        section: 1.18,
+      },
+    },
+    h2: {
+      item: scalePaperFont(fontScale, "h2", 9.4),
+      lineHeight: 1.2,
+    },
+    body: {
+      copy: scalePaperFont(fontScale, "body", 8.35),
+      meta: scalePaperFont(fontScale, "body", 8.3),
+      sideLabel: scalePaperFont(fontScale, "body", 7.4),
+      empty: scalePaperFont(fontScale, "body", 9.5),
+      continuation: scalePaperFont(fontScale, "body", 8),
+      lineHeight: {
+        copy: 1.34,
+        meta: 1.2,
+        sideLabel: 1.22,
+        empty: 1.2,
+        continuation: 1.2,
+      },
+    },
+    footer: {
+      note: scalePaperFont(fontScale, "footer", FOOTER_NOTE_FONT_SIZE),
+      contact: scalePaperFont(fontScale, "footer", FOOTER_CONTACT_FONT_SIZE),
+      lineHeight: {
+        note: FOOTER_NOTE_LINE_HEIGHT,
+        contact: FOOTER_CONTACT_LINE_HEIGHT,
+      },
+    },
+  };
 }
 
 function svgDataUrl(label, accent = "#c9c9c9") {
@@ -86,6 +183,22 @@ function dateLabel(value) {
   return `${year}年${Number(month)}月${Number(day)}日`;
 }
 
+function meetingDateLabel(value) {
+  if (!value) {
+    return "";
+  }
+  const [yearRaw, monthRaw, dayRaw] = String(value).split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  if (!year || !month || !day) {
+    return dateLabel(value);
+  }
+  const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+  const weekday = weekdays[new Date(year, month - 1, day).getDay()] || "";
+  return `${year}年${month}月${day}日${weekday ? `(${weekday})` : ""}`;
+}
+
 function monthLabel(value) {
   if (!value) {
     return "";
@@ -102,8 +215,8 @@ function meetingLine(issue) {
   if (!issue.meeting_date && !issue.meeting_time) {
     return "日時 未設定";
   }
-  const date = issue.meeting_date ? dateLabel(issue.meeting_date) : "日付未設定";
-  const time = issue.meeting_time ? ` 午後${toJapaneseTime(issue.meeting_time)}時より` : "";
+  const date = issue.meeting_date ? meetingDateLabel(issue.meeting_date) : "日付未設定";
+  const time = issue.meeting_time ? ` ${toJapaneseTime(issue.meeting_time)}より` : "";
   return `日時 ${date}${time}`;
 }
 
@@ -111,10 +224,25 @@ function toJapaneseTime(value) {
   const [hoursRaw, minutesRaw] = String(value || "").split(":");
   const hours = Number(hoursRaw || 0);
   const minutes = Number(minutesRaw || 0);
-  if (!minutes) {
-    return String(hours);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return String(value || "");
   }
-  return `${hours}時${minutes}分`;
+
+  const minuteText = minutes ? `${minutes}分` : "";
+  if (hours === 0) {
+    return `午前0時${minuteText}`;
+  }
+  if (hours < 12) {
+    return `午前${hours}時${minuteText}`;
+  }
+  if (hours === 12) {
+    return minutes ? `午後0時${minuteText}` : "正午";
+  }
+  return `午後${hours - 12}時${minuteText}`;
+}
+
+function mainHeadingLabel(issue) {
+  return issue.issue_type === "no_meeting" ? "案内事項" : "常会事項";
 }
 
 function labelForBlockKind(blockKind) {
@@ -326,18 +454,18 @@ function createPageTemplate() {
   return [];
 }
 
-function computeFooterLayout(issue) {
+function computeFooterLayout(issue, typography) {
   const noteText = normalizeText(issue.footer_note);
   const noteBlock = wrapText(noteText, {
     widthMm: FOOTER_LEFT_WIDTH,
-    fontSizePt: FOOTER_NOTE_FONT_SIZE,
-    lineHeight: FOOTER_NOTE_LINE_HEIGHT,
+    fontSizePt: typography.footer.note,
+    lineHeight: typography.footer.lineHeight.note,
     fontFamily: BODY_FONT_FAMILY,
   });
   const noteLines = noteBlock.lines || [];
   const contactHeight = textBlockHeightMm(
-    FOOTER_CONTACT_FONT_SIZE,
-    FOOTER_CONTACT_LINE_HEIGHT,
+    typography.footer.contact,
+    typography.footer.lineHeight.contact,
     FOOTER_CONTACT_LINES.length,
   );
   const contentHeight = Math.max(noteBlock.heightMm, contactHeight, 0);
@@ -356,23 +484,29 @@ function contentBottomLimit(footerLayout) {
   return A4_HEIGHT_MM - footerLayout.reservedHeight;
 }
 
-function addContinuationMarker(page) {
+function addContinuationMarker(page, typography) {
+  const continuationHeight = textBlockHeightMm(
+    typography.body.continuation,
+    typography.body.lineHeight.continuation,
+    1,
+  );
   page.push(
     createTextSchema({
       name: `continued-${page.length}`,
       x: 16,
       y: A4_HEIGHT_MM - 12,
       width: 40,
-      height: 4,
+      height: continuationHeight + 0.4,
       content: "次頁へ続く",
-      fontSize: 8,
+      fontSize: typography.body.continuation,
       fontName: BODY_BOLD_FONT_NAME,
       fontColor: COLOR_RED,
+      lineHeight: typography.body.lineHeight.continuation,
     }),
   );
 }
 
-function addFinalPageFooter(page, issue, footerLayout) {
+function addFinalPageFooter(page, issue, footerLayout, typography) {
   const noteText = normalizeText(issue.footer_note);
   if (noteText) {
     page.push(
@@ -384,14 +518,18 @@ function addFinalPageFooter(page, issue, footerLayout) {
         height: footerLayout.noteHeight + 0.5,
         content: noteText,
         fontName: BODY_BOLD_FONT_NAME,
-        fontSize: FOOTER_NOTE_FONT_SIZE,
-        lineHeight: FOOTER_NOTE_LINE_HEIGHT,
+        fontSize: typography.footer.note,
+        lineHeight: typography.footer.lineHeight.note,
         fontColor: COLOR_RED,
       }),
     );
   }
 
-  const lineHeightMm = textBlockHeightMm(FOOTER_CONTACT_FONT_SIZE, FOOTER_CONTACT_LINE_HEIGHT, 1);
+  const lineHeightMm = textBlockHeightMm(
+    typography.footer.contact,
+    typography.footer.lineHeight.contact,
+    1,
+  );
   const contactTop =
     footerLayout.footerTop + Math.max(0, footerLayout.contentHeight - footerLayout.contactHeight);
 
@@ -405,123 +543,141 @@ function addFinalPageFooter(page, issue, footerLayout) {
         height: lineHeightMm + 0.4,
         content: line,
         fontName: BODY_BOLD_FONT_NAME,
-        fontSize: FOOTER_CONTACT_FONT_SIZE,
-        lineHeight: FOOTER_CONTACT_LINE_HEIGHT,
+        fontSize: typography.footer.contact,
+        lineHeight: typography.footer.lineHeight.contact,
         alignment: "right",
       }),
     );
   });
 }
 
-function addFirstPageHeader(page, issue) {
+function addFirstPageHeader(page, issue, typography) {
   const title = normalizeText(issue.title) || "平古場生産組合　常会の案内";
+  const noteText = normalizeText(issue.header_note);
+  const isNoMeeting = issue.issue_type === "no_meeting";
+  const titleBlock = wrapText(title, {
+    widthMm: 138,
+    fontSizePt: typography.title.primary,
+    lineHeight: typography.title.lineHeight,
+    fontFamily: TITLE_FONT_FAMILY,
+  });
   page.push(
     createTextSchema({
       name: `title-${page.length}`,
       x: 12,
       y: 10,
       width: 138,
-      height: 12,
+      height: Math.max(titleBlock.heightMm + 0.8, 12),
       content: title,
       fontName: TITLE_FONT_NAME,
-      fontSize: 15.5,
-      lineHeight: 1.1,
+      fontSize: typography.title.primary,
+      lineHeight: typography.title.lineHeight,
     }),
   );
-  page.push(
-    createTextSchema({
-      name: `meeting-${page.length}`,
-      x: 14,
-      y: 24,
-      width: 132,
-      height: 6,
-      content: meetingLine(issue),
-      fontName: BODY_BOLD_FONT_NAME,
-      fontSize: 9.4,
-      lineHeight: 1.3,
-    }),
-  );
-  page.push(
-    createTextSchema({
-      name: `place-${page.length}`,
-      x: 14,
-      y: 31,
-      width: 132,
-      height: 5,
-      content: `場所　${normalizeText(issue.place) || "未設定"}`,
-      fontSize: 8.8,
-      lineHeight: 1.2,
-    }),
-  );
-  page.push(
-    createTextSchema({
-      name: `month-${page.length}`,
-      x: 14,
-      y: 37,
-      width: 132,
-      height: 5,
-      content: normalizeText(issue.issue_month) ? `対象月　${monthLabel(issue.issue_month)}` : "",
-      fontSize: 8.8,
-      lineHeight: 1.2,
-    }),
-  );
+  let cursorY = 10 + Math.max(titleBlock.heightMm + 2.6, 14);
+  if (!isNoMeeting) {
+    const meetingHeight = textBlockHeightMm(typography.header.meeting, typography.header.lineHeight.meeting, 1);
+    page.push(
+      createTextSchema({
+        name: `meeting-${page.length}`,
+        x: 14,
+        y: cursorY,
+        width: 132,
+        height: meetingHeight + 0.7,
+        content: meetingLine(issue),
+        fontName: BODY_BOLD_FONT_NAME,
+        fontSize: typography.header.meeting,
+        lineHeight: typography.header.lineHeight.meeting,
+      }),
+    );
+    cursorY += Math.max(meetingHeight + 1.4, 7);
+  }
 
-  if (normalizeText(issue.header_note)) {
-    const noteBlock = wrapText(issue.header_note, {
-      widthMm: 132,
-      fontSizePt: 8.6,
-      lineHeight: 1.25,
+  if (noteText) {
+    const noteWidth = isNoMeeting ? 132 : 124;
+    const noteX = isNoMeeting ? 14 : 22;
+    const noteBlock = wrapText(noteText, {
+      widthMm: noteWidth,
+      fontSizePt: typography.header.note,
+      lineHeight: typography.header.lineHeight.note,
       fontFamily: BODY_FONT_FAMILY,
     });
     page.push(
       createTextSchema({
         name: `note-${page.length}`,
-        x: 22,
-        y: 45,
-        width: 124,
+        x: noteX,
+        y: cursorY,
+        width: noteWidth,
         height: Math.max(noteBlock.heightMm + 1.2, 5),
-        content: normalizeText(issue.header_note),
-        fontSize: 8.6,
+        content: noteText,
+        fontSize: typography.header.note,
         fontName: BODY_BOLD_FONT_NAME,
-        lineHeight: 1.25,
+        lineHeight: typography.header.lineHeight.note,
         fontColor: COLOR_RED,
       }),
     );
-    return 45 + Math.max(noteBlock.heightMm + 2.4, 7.5);
+    cursorY += Math.max(noteBlock.heightMm + 1.8, 6.4);
   }
 
+  if (!isNoMeeting) {
+    const placeHeight = textBlockHeightMm(typography.header.place, typography.header.lineHeight.place, 1);
+    page.push(
+      createTextSchema({
+        name: `place-${page.length}`,
+        x: 14,
+        y: cursorY,
+        width: 132,
+        height: placeHeight + 0.6,
+        content: `場所　${normalizeText(issue.place) || "未設定"}`,
+        fontSize: typography.header.place,
+        lineHeight: typography.header.lineHeight.place,
+      }),
+    );
+    cursorY += Math.max(placeHeight + 1.8, 8.4);
+  } else {
+    cursorY += noteText ? 1.6 : 4.4;
+  }
+
+  const mainHeadingHeight = textBlockHeightMm(typography.h1.main, typography.h1.lineHeight.main, 1);
   page.push(
     createTextSchema({
       name: `main-heading-${page.length}`,
       x: 12,
-      y: 53,
+      y: cursorY,
       width: 60,
-      height: 6,
-      content: "常会事項",
+      height: mainHeadingHeight + 0.8,
+      content: mainHeadingLabel(issue),
       fontName: BODY_BOLD_FONT_NAME,
-      fontSize: 12,
-      lineHeight: 1.1,
+      fontSize: typography.h1.main,
+      lineHeight: typography.h1.lineHeight.main,
     }),
   );
 
-  return 61;
+  return cursorY + Math.max(mainHeadingHeight + 2.2, 8);
 }
 
-function addContinuationHeader(page, issue, pageNumber) {
+function addContinuationHeader(page, issue, pageNumber, typography) {
+  const content = `${normalizeText(issue.title) || "常会案内"}（続き ${pageNumber}頁）`;
+  const titleBlock = wrapText(content, {
+    widthMm: 140,
+    fontSizePt: typography.title.continuation,
+    lineHeight: typography.title.lineHeight,
+    fontFamily: TITLE_FONT_FAMILY,
+  });
   page.push(
     createTextSchema({
       name: `continuation-title-${page.length}`,
       x: 12,
       y: 10,
       width: 140,
-      height: 9,
-      content: `${normalizeText(issue.title) || "常会案内"}（続き ${pageNumber}頁）`,
+      height: Math.max(titleBlock.heightMm + 0.8, 9),
+      content,
       fontName: TITLE_FONT_NAME,
-      fontSize: 11.8,
-      lineHeight: 1.1,
+      fontSize: typography.title.continuation,
+      lineHeight: typography.title.lineHeight,
     }),
   );
-  return 24;
+  return 10 + Math.max(titleBlock.heightMm + 3.2, 14);
 }
 
 function itemMarker(index) {
@@ -547,12 +703,12 @@ function normalizeItemRows(block) {
   ];
 }
 
-function computeSectionHeadingGeometry(block, index) {
+function computeSectionHeadingGeometry(block, index, typography) {
   const sectionTitle = `${index + 1}. ${block.heading || labelForBlockKind(block.block_kind)}`;
   const titleBlock = wrapText(sectionTitle, {
     widthMm: 128,
-    fontSizePt: 10.8,
-    lineHeight: 1.18,
+    fontSizePt: typography.h1.section,
+    lineHeight: typography.h1.lineHeight.section,
     fontFamily: BODY_FONT_FAMILY,
   });
   return {
@@ -561,20 +717,20 @@ function computeSectionHeadingGeometry(block, index) {
   };
 }
 
-function computeItemGeometry(item, assets, itemIndex) {
+function computeItemGeometry(item, assets, itemIndex, typography) {
   const titleText = normalizeText(item.heading)
     ? `${itemMarker(itemIndex)} ${normalizeText(item.heading)}`
     : itemMarker(itemIndex);
   const headingBlock = wrapText(titleText, {
     widthMm: 110,
-    fontSizePt: 9.4,
-    lineHeight: 1.2,
+    fontSizePt: typography.h2.item,
+    lineHeight: typography.h2.lineHeight,
     fontFamily: BODY_FONT_FAMILY,
   });
   const bodyBlock = wrapText(item.body, {
     widthMm: 110,
-    fontSizePt: 8.35,
-    lineHeight: 1.34,
+    fontSizePt: typography.body.copy,
+    lineHeight: typography.body.lineHeight.copy,
     fontFamily: BODY_FONT_FAMILY,
   });
   const metaParts = [
@@ -585,8 +741,8 @@ function computeItemGeometry(item, assets, itemIndex) {
   const metaText = metaParts.join(" ");
   const metaBlock = wrapText(metaText, {
     widthMm: 110,
-    fontSizePt: 8.3,
-    lineHeight: 1.2,
+    fontSizePt: typography.body.meta,
+    lineHeight: typography.body.lineHeight.meta,
     fontFamily: BODY_FONT_FAMILY,
   });
 
@@ -609,8 +765,8 @@ function computeItemGeometry(item, assets, itemIndex) {
   };
 }
 
-function addSectionHeading(page, block, index, rowTop) {
-  const { content, height } = computeSectionHeadingGeometry(block, index);
+function addSectionHeading(page, block, index, rowTop, typography) {
+  const { content, height } = computeSectionHeadingGeometry(block, index, typography);
   page.push(
     createTextSchema({
       name: `section-${page.length}`,
@@ -620,21 +776,18 @@ function addSectionHeading(page, block, index, rowTop) {
       height,
       content,
       fontName: BODY_BOLD_FONT_NAME,
-      fontSize: 10.8,
-      lineHeight: 1.18,
+      fontSize: typography.h1.section,
+      lineHeight: typography.h1.lineHeight.section,
     }),
   );
   return height + 1.2;
 }
 
-function addItemRow(page, block, item, assets, itemIndex, rowTop) {
+function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
   const sideX = 146;
   const headingX = 18;
-  const { titleText, headingText, bodyText, metaText, metaHeight, rowHeight } = computeItemGeometry(
-    item,
-    assets,
-    itemIndex,
-  );
+  const { titleText, headingText, bodyText, metaText, metaHeight, rowHeight } =
+    computeItemGeometry(item, assets, itemIndex, typography);
 
   page.push(
     createTextSchema({
@@ -645,8 +798,8 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop) {
       height: Math.max(headingText.heightMm + 0.4, 4.6),
       content: titleText,
       fontName: BODY_FONT_NAME,
-      fontSize: 9.4,
-      lineHeight: 1.2,
+      fontSize: typography.h2.item,
+      lineHeight: typography.h2.lineHeight,
     }),
   );
 
@@ -660,8 +813,8 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop) {
         width: 110,
         height: bodyText.heightMm + 0.5,
         content: normalizeText(item.body),
-        fontSize: 8.35,
-        lineHeight: 1.34,
+        fontSize: typography.body.copy,
+        lineHeight: typography.body.lineHeight.copy,
       }),
     );
     cursorY += bodyText.heightMm + 0.7;
@@ -676,9 +829,9 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop) {
         width: 110,
         height: metaHeight + 0.5,
         content: metaText,
-        fontSize: 8.3,
+        fontSize: typography.body.meta,
         fontName: BODY_BOLD_FONT_NAME,
-        lineHeight: 1.2,
+        lineHeight: typography.body.lineHeight.meta,
         fontColor: COLOR_RED,
       }),
     );
@@ -704,9 +857,9 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop) {
         width: 24,
         height: 11,
         content: `【${labelForBlockKind(block.block_kind)}】\n対象者:${normalizeText(item.audience_label) || "全員"}`,
-        fontSize: 7.4,
+        fontSize: typography.body.sideLabel,
         fontName: BODY_BOLD_FONT_NAME,
-        lineHeight: 1.22,
+        lineHeight: typography.body.lineHeight.sideLabel,
         fontColor: COLOR_RED,
       }),
     );
@@ -715,42 +868,44 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop) {
   return rowHeight;
 }
 
-function buildTemplate(issue, blocks, attachmentAssets) {
-  const footerLayout = computeFooterLayout(issue);
+function buildTemplate(issue, blocks, attachmentAssets, fontScale) {
+  const typography = buildPaperTypography(fontScale);
+  const footerLayout = computeFooterLayout(issue, typography);
+  const pageBottomLimit = contentBottomLimit(footerLayout);
   const pages = [];
   let page = createPageTemplate();
   pages.push(page);
-  let cursorY = addFirstPageHeader(page, issue) + 2.8;
+  let cursorY = addFirstPageHeader(page, issue, typography) + 2.8;
   let printedCount = 0;
 
   blocks.forEach((block, index) => {
     const items = normalizeItemRows(block);
     const firstAssets = attachmentAssets.get(attachmentAssetKey(block, items[0])) || [];
     const estimatedFirstRow =
-      computeSectionHeadingGeometry(block, index).height +
-      computeItemGeometry(items[0], firstAssets, 0).rowHeight +
+      computeSectionHeadingGeometry(block, index, typography).height +
+      computeItemGeometry(items[0], firstAssets, 0, typography).rowHeight +
       4;
-    const remaining = A4_HEIGHT_MM - 16 - cursorY;
+    const remaining = pageBottomLimit - cursorY;
     if (remaining < estimatedFirstRow && index > 0) {
-      addContinuationMarker(page);
+      addContinuationMarker(page, typography);
       page = createPageTemplate();
       pages.push(page);
-      cursorY = addContinuationHeader(page, issue, pages.length) + 2;
+      cursorY = addContinuationHeader(page, issue, pages.length, typography) + 2;
     }
 
-    cursorY += addSectionHeading(page, block, index, cursorY);
+    cursorY += addSectionHeading(page, block, index, cursorY, typography);
 
     items.forEach((item, itemIndex) => {
       const assets = attachmentAssets.get(attachmentAssetKey(block, item)) || [];
-      const rowHeight = computeItemGeometry(item, assets, itemIndex).rowHeight;
-      if (A4_HEIGHT_MM - 16 - cursorY < rowHeight && itemIndex > 0) {
-        addContinuationMarker(page);
+      const rowHeight = computeItemGeometry(item, assets, itemIndex, typography).rowHeight;
+      if (pageBottomLimit - cursorY < rowHeight && itemIndex > 0) {
+        addContinuationMarker(page, typography);
         page = createPageTemplate();
         pages.push(page);
-        cursorY = addContinuationHeader(page, issue, pages.length) + 2;
-        cursorY += addSectionHeading(page, block, index, cursorY);
+        cursorY = addContinuationHeader(page, issue, pages.length, typography) + 2;
+        cursorY += addSectionHeading(page, block, index, cursorY, typography);
       }
-      const actualHeight = addItemRow(page, block, item, assets, itemIndex, cursorY);
+      const actualHeight = addItemRow(page, block, item, assets, itemIndex, cursorY, typography);
       cursorY += actualHeight + 2.8;
     });
 
@@ -767,13 +922,13 @@ function buildTemplate(issue, blocks, attachmentAssets) {
         width: 132,
         height: 8,
         content: "まだ本文ブロックがありません。",
-        fontSize: 9.5,
-        lineHeight: 1.2,
+        fontSize: typography.body.empty,
+        lineHeight: typography.body.lineHeight.empty,
       }),
     );
   }
 
-  addFinalPageFooter(page, issue, footerLayout);
+  addFinalPageFooter(page, issue, footerLayout, typography);
 
   return {
     basePdf: BLANK_A4_PDF,
@@ -785,16 +940,40 @@ function buildPdfTitle(issue) {
   return normalizeText(issue.title) || "jokai-notice";
 }
 
-export function pdfFileName(issue) {
-  const base = buildPdfTitle(issue)
-    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "_")
-    .trim();
-  return `${base || "jokai-notice"}.pdf`;
+function buildPdfMonthPrefix(issue) {
+  const issueMonth = normalizeText(issue.issue_month);
+  if (issueMonth) {
+    return issueMonth.slice(0, 7);
+  }
+
+  const meetingDate = normalizeText(issue.meeting_date);
+  if (meetingDate) {
+    return meetingDate.slice(0, 7);
+  }
+
+  return "";
 }
 
-export async function buildNoticePdfDocument(issue, blocks) {
+function sanitizePdfFilePart(value, fallback) {
+  const sanitized = normalizeText(value)
+    .replace(/\s+/g, "-")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .trim();
+  return sanitized || fallback;
+}
+
+export function pdfFileName(issue) {
+  const monthPrefix = sanitizePdfFilePart(buildPdfMonthPrefix(issue), "");
+  const titlePart = sanitizePdfFilePart(buildPdfTitle(issue), "jokai-notice");
+  const base = monthPrefix ? `${monthPrefix}-${titlePart}` : titlePart;
+  return `${base}.pdf`;
+}
+
+export async function buildNoticePdfDocument(issue, blocks, fontScale = PAPER_FONT_SCALE_DEFAULTS) {
   const [font, attachmentAssets] = await Promise.all([loadFonts(), buildAttachmentAssets(blocks)]);
-  const template = buildTemplate(issue, blocks, attachmentAssets);
+  const template = buildTemplate(issue, blocks, attachmentAssets, fontScale);
   const bytes = await generate({
     template,
     inputs: [{}],

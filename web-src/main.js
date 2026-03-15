@@ -1,5 +1,12 @@
 import "./app.css";
-import { buildNoticePdfDocument, pdfFileName } from "./notice-pdf.js";
+import {
+  PAPER_FONT_SCALE_DEFAULTS,
+  PAPER_FONT_SCALE_LIMITS,
+  PAPER_FONT_SCALE_ORDER,
+  buildNoticePdfDocument,
+  normalizePaperFontScale,
+  pdfFileName,
+} from "./notice-pdf.js";
 
 const app = document.querySelector("#app");
 
@@ -24,11 +31,22 @@ const blockKindLabels = {
   freeform: "自由記述",
 };
 
+const paperFontScaleLabels = {
+  title: "title",
+  header: "header",
+  h1: "h1",
+  h2: "h2",
+  body: "body",
+  footer: "footer",
+};
+const paperFontScaleStorageKey = "jokai.paper-font-scale.v1";
+
 const state = {
   meta: null,
   issues: [],
   issue: null,
   blocks: [],
+  paperFontScale: loadPaperFontScale(),
   selectedAttachmentId: "",
   loading: true,
   saving: false,
@@ -45,6 +63,46 @@ const state = {
 
 const itemIndexLabels = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫"];
 let printShortcutPending = false;
+
+function loadPaperFontScale() {
+  try {
+    const raw = window.localStorage.getItem(paperFontScaleStorageKey);
+    if (!raw) {
+      return { ...PAPER_FONT_SCALE_DEFAULTS };
+    }
+    return normalizePaperFontScale(JSON.parse(raw));
+  } catch {
+    return { ...PAPER_FONT_SCALE_DEFAULTS };
+  }
+}
+
+function persistPaperFontScale() {
+  try {
+    window.localStorage.setItem(paperFontScaleStorageKey, JSON.stringify(state.paperFontScale));
+  } catch {
+    // Ignore localStorage failures and keep the in-memory value.
+  }
+}
+
+function updatePaperFontScale(partial = {}) {
+  state.paperFontScale = normalizePaperFontScale({
+    ...state.paperFontScale,
+    ...partial,
+  });
+  persistPaperFontScale();
+}
+
+function adjustPaperFontScale(category, delta) {
+  const nextValue =
+    (state.paperFontScale[category] || PAPER_FONT_SCALE_DEFAULTS[category]) +
+    delta * PAPER_FONT_SCALE_LIMITS.step;
+  updatePaperFontScale({ [category]: nextValue });
+}
+
+function resetPaperFontScale() {
+  state.paperFontScale = { ...PAPER_FONT_SCALE_DEFAULTS };
+  persistPaperFontScale();
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -410,6 +468,37 @@ function renderNoticePreviewMarkup() {
   `;
 }
 
+function renderPaperFontScaleControls() {
+  const rows = PAPER_FONT_SCALE_ORDER.map((category) => {
+    const value = state.paperFontScale[category];
+    const atMin = value <= PAPER_FONT_SCALE_LIMITS.min;
+    const atMax = value >= PAPER_FONT_SCALE_LIMITS.max;
+    return `
+      <div class="font-scale-row">
+        <span class="font-scale-label">${escapeHtml(paperFontScaleLabels[category])}</span>
+        <div class="font-scale-actions">
+          <button class="ghost-button" type="button" data-font-scale-adjust="${category}:-1" ${atMin ? "disabled" : ""}>-</button>
+          <span class="font-scale-value">${escapeHtml(`${value}%`)}</span>
+          <button class="ghost-button" type="button" data-font-scale-adjust="${category}:1" ${atMax ? "disabled" : ""}>+</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">文字サイズ</h2>
+          <p class="card-copy">紙面そのものの文字倍率です。現在の見た目を 80% 基準として扱い、このブラウザ全体で共有します。</p>
+        </div>
+        <button class="ghost-button" type="button" id="reset-paper-font-scale-button">標準に戻す</button>
+      </div>
+      <div class="font-scale-grid">${rows}</div>
+    </section>
+  `;
+}
+
 function renderPreviewPagesMarkup() {
   if (!state.previewImages.length) {
     return "";
@@ -662,6 +751,8 @@ function renderEditor() {
             </div>
           </section>
 
+          ${renderPaperFontScaleControls()}
+
           <section class="card">
             <div class="card-header">
               <div>
@@ -778,7 +869,7 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
   const generation = ++state.previewGeneration;
 
   try {
-    const { bytes } = await buildNoticePdfDocument(state.issue, state.blocks);
+    const { bytes } = await buildNoticePdfDocument(state.issue, state.blocks, state.paperFontScale);
     if (generation !== state.previewGeneration) {
       return;
     }
@@ -795,6 +886,7 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
       minute: "2-digit",
       second: "2-digit",
     });
+    clearPreviewErrorMessage();
     updatePreviewDom();
 
     if (forceDownload) {
@@ -849,6 +941,17 @@ function markDirty() {
   updateSaveStateText();
 }
 
+function clearPreviewErrorMessage() {
+  if (!String(state.error || "").startsWith("プレビュー生成に失敗しました:")) {
+    return;
+  }
+  state.error = "";
+  const flash = document.querySelector(".flash--error");
+  if (flash && String(flash.textContent || "").startsWith("プレビュー生成に失敗しました:")) {
+    flash.remove();
+  }
+}
+
 function bindPreviewButtons() {
   document.querySelector("#refresh-preview-button")?.addEventListener("click", () => {
     schedulePreview("manual-refresh");
@@ -871,6 +974,22 @@ function bindEditEvents() {
 
   document.querySelector("#save-issue-button")?.addEventListener("click", async () => {
     await saveEditor();
+  });
+
+  document.querySelector("#reset-paper-font-scale-button")?.addEventListener("click", () => {
+    resetPaperFontScale();
+    renderEditor();
+  });
+
+  document.querySelectorAll("[data-font-scale-adjust]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const [category, deltaRaw] = String(button.getAttribute("data-font-scale-adjust")).split(":");
+      if (!PAPER_FONT_SCALE_ORDER.includes(category)) {
+        return;
+      }
+      adjustPaperFontScale(category, Number(deltaRaw || 0));
+      renderEditor();
+    });
   });
 
   document.querySelectorAll("[data-issue-field]").forEach((node) => {
@@ -1190,6 +1309,18 @@ window.addEventListener("keydown", (event) => {
   }
   event.preventDefault();
   void openPrintPageFromEditor();
+});
+
+window.addEventListener("storage", (event) => {
+  if (event.key !== paperFontScaleStorageKey) {
+    return;
+  }
+  state.paperFontScale = loadPaperFontScale();
+  if (boot.view === "edit" && state.issue) {
+    renderEditor();
+  } else if (boot.view === "print" && state.issue) {
+    schedulePreview("storage-font-scale");
+  }
 });
 
 if (boot.view === "edit" && boot.issueId) {
