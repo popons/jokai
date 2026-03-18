@@ -108,6 +108,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 
 ## Verification Notes
 
+- 初回 clone 後や WSL 側へ作業ツリーを持ち直した直後など `node_modules` が無い状態では、先に `npm ci` を実行する。未セットアップのまま `./watch-run-server.sh` を動かすと内部の `npm run build` が `vite: not found` で落ちる。
 - `web-src/` を触ったら `npm run build` で `web-dist/` を更新する。
 - 変更後は `cargo fmt` を実行する。
 - `cargo check` / `cargo test` / `cargo clippy` はバックグラウンド監視へ委ね、保存後 1 秒待ってから `build-error.txt` / `test-error.txt` / `build-error-win.txt` / `clippy-error.txt` を読む。

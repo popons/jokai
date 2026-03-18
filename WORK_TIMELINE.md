@@ -208,3 +208,7 @@
 - 2026-03-18 20:45:51 +0900 [検証] `npm run build` は成功。`cargo fmt` も実行済みで、保存後の `build-error.txt` / `test-error.txt` / `clippy-error.txt` に失敗なし、`build-error-win.txt` は未生成のまま。
 - 2026-03-18 20:53:13 +0900 [codified-context] `codified-context-maintenance` を implementation-followup として起動。監査スクリプトは source change に対する `AGENTS.md` / `context` 側の追従不足を検出。
 - 2026-03-18 20:53:13 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` に Clipboard画像添付の current truth を追記。3導線が既存 `POST /api/items/{id}/attachments` に収束する点と確認観点を明文化。
+- 2026-03-18 22:38:23 +0900 [調査] `./watch-run-server.sh` 実行失敗を確認。`package.json` には `vite` 依存がある一方で `node_modules` 不在のため、`npm run build` 内の `vite build` が `sh: 1: vite: not found` で停止していると判断。
+- 2026-03-18 22:39:57 +0900 [検証] `npm ci` で依存導入後、`npm run build` は成功。今回の `vite: not found` は `watch-run-server.sh` の不具合ではなく、作業ツリー未セットアップが原因と確定。
+- 2026-03-18 22:42:11 +0900 [codified-context] debug-followup として監査。今回の知見は repo-wide な起動手順不足なので、新規文書は増やさず `AGENTS.md` と `context/repo-map.md` の既存ルーティングへ最小追記する方針に決定。
+- 2026-03-18 22:42:50 +0900 [codified-context] `AGENTS.md` の既知コマンドと `context/repo-map.md` の Verification Notes に `npm ci` 前提を追記。保存後 1 秒待機のうえ `build-error.txt` / `test-error.txt` / `clippy-error.txt` を確認し、新規失敗なしと判断。

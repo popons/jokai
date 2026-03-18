@@ -120,6 +120,7 @@ pythonコマンドないので、python3コマンドを使ってね
 
 ## 既知コマンド
 
+- `npm ci`: 初回 clone 後や `node_modules` 不在の作業ツリーでフロント依存を復元する。未実行だと `./watch-run-server.sh` 内の `npm run build` が `vite: not found` で停止する。
 - `npm run build`: `web-src/` から `web-dist/` を再生成する。
 - `cargo fmt`: 変更後に実行が必要。
 - `./db-init.sh` / `./db-migrate.sh` / `./db-status.sh` / `./db-reset.sh`: DB 操作用スクリプト。
