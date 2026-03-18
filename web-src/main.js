@@ -10,12 +10,33 @@ import {
   normalizePaperFontScale,
   pdfFileName,
 } from "./notice-pdf.js";
+import {
+  ISSUE_FAMILY_KEY,
+  SHOGAI_KYOSAI_FAMILY_KEY,
+  SHOGAI_KYOSAI_JOIN_RENEWAL_TEMPLATE_KEY,
+  defaultTemplatePayload,
+  familyDefinition,
+  familyIndexPath,
+  familyTemplateDefinitions,
+  normalizeFamilyKey,
+  normalizeTemplatePayload,
+  templateDefinition,
+  templateDocumentAutoTitle,
+  templateLabel,
+  templatePayloadText,
+} from "./template-doc-registry.js";
+import {
+  buildTemplateDocumentPdfDocument,
+  templateDocumentPdfFileName,
+} from "./template-doc-pdf.js";
 
 const app = document.querySelector("#app");
 
 const boot = {
   view: app?.dataset.view || "index",
   issueId: app?.dataset.issueId || "",
+  templateDocumentId: app?.dataset.templateDocumentId || "",
+  familyTab: normalizeFamilyKey(app?.dataset.familyTab || ISSUE_FAMILY_KEY),
   printMode: app?.dataset.printMode === "1",
 };
 
@@ -55,7 +76,11 @@ const paperFontScaleStorageKey = "jokai.paper-font-scale.v1";
 const state = {
   meta: null,
   issues: [],
+  templateDocuments: [],
   issue: null,
+  templateDocument: null,
+  templatePayloadText: "",
+  activeFamily: boot.familyTab,
   blocks: [],
   paperFontScale: loadPaperFontScale(),
   selectedAttachmentId: "",
@@ -184,6 +209,28 @@ function normalizeIssue(issue) {
   };
 }
 
+function normalizeTemplateDocument(document = {}) {
+  const documentFamily = document.document_family || SHOGAI_KYOSAI_FAMILY_KEY;
+  const templateKey = document.template_key || SHOGAI_KYOSAI_JOIN_RENEWAL_TEMPLATE_KEY;
+  const payload = normalizeTemplatePayload(documentFamily, templateKey, document.payload || {});
+  return {
+    id: document.id || "",
+    document_family: documentFamily,
+    template_key: templateKey,
+    status: document.status || "draft",
+    title:
+      String(document.title || "").trim() ||
+      templateDocumentAutoTitle(documentFamily, templateKey, payload),
+    template_asset_path:
+      document.template_asset_path || templateDefinition(documentFamily, templateKey).template_asset_path,
+    template_version:
+      document.template_version || templateDefinition(documentFamily, templateKey).template_version,
+    payload,
+    created_at: document.created_at || "",
+    updated_at: document.updated_at || "",
+  };
+}
+
 function normalizeAttachment(attachment = {}) {
   return {
     id: attachment.id || "",
@@ -258,6 +305,16 @@ function initialItem() {
   });
 }
 
+function initialTemplateDocumentDraft(documentFamily, templateKey) {
+  const payload = defaultTemplatePayload(documentFamily, templateKey);
+  return normalizeTemplateDocument({
+    document_family: documentFamily,
+    template_key: templateKey,
+    title: templateDocumentAutoTitle(documentFamily, templateKey, payload),
+    payload,
+  });
+}
+
 function initialItemSupplement(tone = "red") {
   return normalizeItemSupplement({
     tone,
@@ -329,6 +386,49 @@ function payloadFromState() {
 
 function printPageUrl(issueId = state.issue?.id || boot.issueId) {
   return `/issues/${encodeURIComponent(issueId || "")}/print`;
+}
+
+function templateDocumentEditUrl(templateDocumentId = state.templateDocument?.id || boot.templateDocumentId) {
+  return `/template-documents/${encodeURIComponent(templateDocumentId || "")}/edit`;
+}
+
+function templateDocumentPrintUrl(templateDocumentId = state.templateDocument?.id || boot.templateDocumentId) {
+  return `/template-documents/${encodeURIComponent(templateDocumentId || "")}/print`;
+}
+
+function parseTemplatePayloadText(rawText = state.templatePayloadText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText || "{}");
+  } catch (error) {
+    throw new Error(`JSON を解釈できません: ${error.message}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("JSON の最上位は object にしてください。");
+  }
+  if (!state.templateDocument) {
+    return parsed;
+  }
+  return normalizeTemplatePayload(
+    state.templateDocument.document_family,
+    state.templateDocument.template_key,
+    parsed,
+  );
+}
+
+function templateDocumentPayloadFromState() {
+  if (!state.templateDocument) {
+    return { title: "", payload: {} };
+  }
+  const payload = parseTemplatePayloadText();
+  return {
+    title: String(state.templateDocument.title || "").trim(),
+    payload,
+  };
+}
+
+function selectedIndexFamily() {
+  return normalizeFamilyKey(state.activeFamily || boot.familyTab || ISSUE_FAMILY_KEY);
 }
 
 function allAttachments() {
@@ -758,7 +858,14 @@ function renderItemCard(block, blockIndex, item, itemIndex) {
   `;
 }
 
-function renderNoticePreviewMarkup() {
+function renderPdfPreviewMarkup({
+  title,
+  badge,
+  emptyCopy,
+  downloadLabel = "PDFを出力",
+  previewAriaLabel = "PDF プレビュー",
+  previewAltPrefix = "PDFプレビュー",
+} = {}) {
   const previewStatus = state.previewPending
     ? "PDF を組版中…"
     : state.previewReadyAt
@@ -767,13 +874,13 @@ function renderNoticePreviewMarkup() {
 
   return `
     <div class="preview-heading">
-      <strong>印刷プレビュー</strong>
-      <span class="badge badge--accent">A4固定</span>
+      <strong>${escapeHtml(title || "印刷プレビュー")}</strong>
+      <span class="badge badge--accent">${escapeHtml(badge || "A4固定")}</span>
     </div>
     <div class="pdf-stage">
-      <div id="notice-preview-pages" class="pdf-preview-pages" aria-label="常会案内 PDF プレビュー">${renderPreviewPagesMarkup()}</div>
+      <div id="notice-preview-pages" class="pdf-preview-pages" aria-label="${escapeHtml(previewAriaLabel)}">${renderPreviewPagesMarkup(previewAltPrefix)}</div>
       <div class="pdf-stage-placeholder ${state.previewImages.length ? "is-hidden" : ""}" id="notice-preview-placeholder">
-        <p>ここに生成済みの案内PDFが表示されます。</p>
+        <p>${escapeHtml(emptyCopy || "ここに生成済みのPDFが表示されます。")}</p>
       </div>
       <div class="pdf-stage-overlay ${state.previewPending ? "is-visible" : ""}" id="notice-preview-overlay">PDF を生成しています…</div>
     </div>
@@ -781,10 +888,32 @@ function renderNoticePreviewMarkup() {
       <span class="preview-status" id="notice-preview-status">${previewStatus}</span>
       <div class="preview-actions">
         <button class="ghost-button" type="button" id="refresh-preview-button">再生成</button>
-        <button class="primary-button" type="button" id="download-notice-pdf-button">案内PDFを出力</button>
+        <button class="primary-button" type="button" id="download-notice-pdf-button">${escapeHtml(downloadLabel)}</button>
       </div>
     </div>
   `;
+}
+
+function renderNoticePreviewMarkup() {
+  return renderPdfPreviewMarkup({
+    title: "印刷プレビュー",
+    badge: "A4固定",
+    emptyCopy: "ここに生成済みの案内PDFが表示されます。",
+    downloadLabel: "案内PDFを出力",
+    previewAriaLabel: "常会案内 PDF プレビュー",
+    previewAltPrefix: "常会案内プレビュー",
+  });
+}
+
+function renderTemplateDocumentPreviewMarkup() {
+  return renderPdfPreviewMarkup({
+    title: "帳票プレビュー",
+    badge: "SVG bind",
+    emptyCopy: "ここに生成済みの農作業傷害共済 PDF が表示されます。",
+    downloadLabel: "帳票PDFを出力",
+    previewAriaLabel: "農作業傷害共済 PDF プレビュー",
+    previewAltPrefix: "農作業傷害共済プレビュー",
+  });
 }
 
 function renderPaperFontScaleControls() {
@@ -818,7 +947,7 @@ function renderPaperFontScaleControls() {
   `;
 }
 
-function renderPreviewPagesMarkup() {
+function renderPreviewPagesMarkup(altPrefix = "PDFプレビュー") {
   if (!state.previewImages.length) {
     return "";
   }
@@ -826,24 +955,23 @@ function renderPreviewPagesMarkup() {
     .map(
       (src, index) => `
         <div class="pdf-preview-page">
-          <img class="pdf-preview-image" src="${src}" alt="常会案内プレビュー ${index + 1}ページ目">
+          <img class="pdf-preview-image" src="${src}" alt="${escapeHtml(`${altPrefix} ${index + 1}ページ目`)}">
         </div>
       `,
     )
     .join("");
 }
 
-function renderIndex() {
-  const issueCards = state.issues.length
+function renderIssueCards() {
+  return state.issues.length
     ? state.issues
-        .map(
-          (issue) => {
-            const editHref = `/issues/${encodeURIComponent(issue.id)}/edit`;
-            const deleteDisabled = issue.status === "published";
-            const deleteAttributes = deleteDisabled
-              ? ' disabled title="公開済みの案内は削除できません"'
-              : "";
-            return `
+        .map((issue) => {
+          const editHref = `/issues/${encodeURIComponent(issue.id)}/edit`;
+          const deleteDisabled = issue.status === "published";
+          const deleteAttributes = deleteDisabled
+            ? ' disabled title="公開済みの案内は削除できません"'
+            : "";
+          return `
             <article class="issue-card">
               <div class="issue-card-head">
                 <div>
@@ -866,18 +994,127 @@ function renderIndex() {
               </div>
             </article>
           `;
-          },
-        )
+        })
         .join("")
     : `<div class="empty-state">まだ案内はありません。左の作成ボタンから最初の号を起こしてください。</div>`;
+}
+
+function renderTemplateDocumentCards() {
+  const documents = state.templateDocuments.filter(
+    (document) => document.document_family === SHOGAI_KYOSAI_FAMILY_KEY,
+  );
+  return documents.length
+    ? documents
+        .map((document) => `
+          <article class="issue-card issue-card--template">
+            <div class="issue-card-head">
+              <div>
+                <h2 class="issue-card-title">${escapeHtml(document.title)}</h2>
+                <div class="issue-card-meta">
+                  <span class="badge badge--accent">${escapeHtml(familyDefinition(document.document_family).label)}</span>
+                  <span class="badge badge--draft">${escapeHtml(templateLabel(document.document_family, document.template_key))}</span>
+                </div>
+              </div>
+              <span class="issue-card-stat">${escapeHtml(document.template_version)}</span>
+            </div>
+            <p class="issue-card-copy">テンプレ: ${escapeHtml(document.template_asset_path)} / 更新: ${escapeHtml(document.updated_at || "未保存")}</p>
+            <div class="issue-card-footer">
+              <span class="issue-card-stat">${escapeHtml(document.status)}</span>
+              <div class="issue-card-actions">
+                <a class="issue-link" href="${templateDocumentEditUrl(document.id)}">編集へ</a>
+                <button class="ghost-button ghost-button--danger" type="button" data-delete-template-document="${escapeHtml(document.id)}">削除</button>
+              </div>
+            </div>
+          </article>
+        `)
+        .join("")
+    : `<div class="empty-state">まだ帳票はありません。左の作成ボタンから最初の帳票を起こしてください。</div>`;
+}
+
+function renderIssueFamilyPanel() {
+  return `
+    <section class="workspace index-layout">
+      <div class="panel">
+        <div class="panel-inner">
+          <h2 class="section-title">新しい号を起こす</h2>
+          <p class="section-copy">まず型を選び、本文 block と資料サムネを積み上げます。</p>
+          <div class="create-grid">
+            <button class="create-button" data-create-issue="normal">
+              <strong>通常案内</strong>
+              <span>開催日時・場所・議題・提出物を持つ、いつもの常会案内。</span>
+            </button>
+            <button class="create-button" data-create-issue="correction">
+              <strong>訂正案内</strong>
+              <span>時間や記載内容の誤りを差し替える訂正版を起こします。</span>
+            </button>
+            <button class="create-button" data-create-issue="no_meeting">
+              <strong>常会なし</strong>
+              <span>今月は開催しないが、提出物や周知だけは出したいとき用です。</span>
+            </button>
+            <button class="create-button" data-create-issue="one_off">
+              <strong>単発案内</strong>
+              <span>井手堰や座談会のような別件の案内を個別に組み立てます。</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-inner">
+          <h2 class="section-title">既存の案内</h2>
+          <p class="section-copy">草稿の一覧です。編集から資料アップロード、案内PDF出力まで進められます。</p>
+          <div class="list-grid">${renderIssueCards()}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderTemplateFamilyPanel() {
+  const templates = familyTemplateDefinitions(SHOGAI_KYOSAI_FAMILY_KEY);
+  return `
+    <section class="workspace index-layout">
+      <div class="panel">
+        <div class="panel-inner">
+          <h2 class="section-title">新しい帳票を起こす</h2>
+          <p class="section-copy">テンプレ固定の SVG 帳票に JSON を bind して、1件ごとの PDF を作ります。</p>
+          <div class="create-grid">
+            ${templates
+              .map(
+                (definition) => `
+                  <button class="create-button" data-create-template-document="${escapeHtml(definition.template_key)}">
+                    <strong>${escapeHtml(definition.label)}</strong>
+                    <span>テンプレ版 ${escapeHtml(definition.template_version)} / SVG 正本 ${escapeHtml(definition.template_asset_path)}</span>
+                  </button>
+                `,
+              )
+              .join("")}
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-inner">
+          <h2 class="section-title">既存の帳票</h2>
+          <p class="section-copy">JSON 下書きを保持しながら、SVG bind プレビューと PDF 出力を繰り返せます。</p>
+          <div class="list-grid">${renderTemplateDocumentCards()}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderIndex() {
+  const activeFamily = selectedIndexFamily();
+  const family = familyDefinition(activeFamily);
 
   app.innerHTML = `
     <main class="shell">
       <header class="masthead">
         <div class="brand-block">
           <span class="eyebrow">JOKAI COMPOSER</span>
-          <h1 class="page-title">常会案内を作成する</h1>
-          <p class="page-lead">固定テンプレの案内PDFを右側の正本プレビューで確かめながら、本文と資料サムネを整えます。</p>
+          <h1 class="page-title">文書ファミリーを選ぶ</h1>
+          <p class="page-lead">常会案内と農作業傷害共済を同じアプリで管理しつつ、保存モデルは混ぜない方針です。</p>
         </div>
         <aside class="status-panel">
           <div class="status-grid">
@@ -897,44 +1134,49 @@ function renderIndex() {
         </aside>
       </header>
 
-      <section class="workspace index-layout">
-        <div class="panel">
-          <div class="panel-inner">
-            <h2 class="section-title">新しい号を起こす</h2>
-            <p class="section-copy">まず型を選び、本文 block と資料サムネを積み上げます。</p>
-            <div class="create-grid">
-              <button class="create-button" data-create-issue="normal">
-                <strong>通常案内</strong>
-                <span>開催日時・場所・議題・提出物を持つ、いつもの常会案内。</span>
-              </button>
-              <button class="create-button" data-create-issue="correction">
-                <strong>訂正案内</strong>
-                <span>時間や記載内容の誤りを差し替える訂正版を起こします。</span>
-              </button>
-              <button class="create-button" data-create-issue="no_meeting">
-                <strong>常会なし</strong>
-                <span>今月は開催しないが、提出物や周知だけは出したいとき用です。</span>
-              </button>
-              <button class="create-button" data-create-issue="one_off">
-                <strong>単発案内</strong>
-                <span>井手堰や座談会のような別件の案内を個別に組み立てます。</span>
-              </button>
-            </div>
-          </div>
+      <section class="family-switcher">
+        <div class="family-tabs" role="tablist" aria-label="文書ファミリー">
+          ${[ISSUE_FAMILY_KEY, SHOGAI_KYOSAI_FAMILY_KEY]
+            .map((familyKey) => {
+              const definition = familyDefinition(familyKey);
+              const selected = familyKey === activeFamily;
+              return `
+                <button
+                  class="family-tab ${selected ? "is-active" : ""}"
+                  type="button"
+                  role="tab"
+                  aria-selected="${selected ? "true" : "false"}"
+                  data-family-tab="${escapeHtml(familyKey)}"
+                >
+                  <strong>${escapeHtml(definition.label)}</strong>
+                  <span>${escapeHtml(definition.lead)}</span>
+                </button>
+              `;
+            })
+            .join("")}
         </div>
-
-        <div class="panel">
-          <div class="panel-inner">
-            <h2 class="section-title">既存の案内</h2>
-            <p class="section-copy">草稿の一覧です。編集から資料アップロード、案内PDF出力まで進められます。</p>
-            ${state.error ? `<div class="flash flash--error">${escapeHtml(state.error)}</div>` : ""}
-            ${state.notice ? `<div class="flash flash--info">${escapeHtml(state.notice)}</div>` : ""}
-            <div class="list-grid">${issueCards}</div>
-          </div>
+        <div class="family-hero">
+          <span class="eyebrow">${escapeHtml(family.eyebrow)}</span>
+          <h2 class="section-title">${escapeHtml(family.label)}</h2>
+          <p class="section-copy">${escapeHtml(family.lead)}</p>
         </div>
       </section>
+
+      ${state.error ? `<div class="flash flash--error">${escapeHtml(state.error)}</div>` : ""}
+      ${state.notice ? `<div class="flash flash--info">${escapeHtml(state.notice)}</div>` : ""}
+
+      ${activeFamily === ISSUE_FAMILY_KEY ? renderIssueFamilyPanel() : renderTemplateFamilyPanel()}
     </main>
   `;
+
+  app.querySelectorAll("[data-family-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextFamily = normalizeFamilyKey(button.getAttribute("data-family-tab"));
+      state.activeFamily = nextFamily;
+      window.history.replaceState(null, "", familyIndexPath(nextFamily));
+      renderIndex();
+    });
+  });
 
   app.querySelectorAll("[data-create-issue]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -960,6 +1202,23 @@ function renderIndex() {
         return;
       }
       await deleteIssue(issueId);
+    });
+  });
+
+  app.querySelectorAll("[data-create-template-document]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const templateKey = button.getAttribute("data-create-template-document");
+      await createTemplateDocument(SHOGAI_KYOSAI_FAMILY_KEY, templateKey);
+    });
+  });
+
+  app.querySelectorAll("[data-delete-template-document]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const templateDocumentId = button.getAttribute("data-delete-template-document");
+      if (!templateDocumentId) {
+        return;
+      }
+      await deleteTemplateDocument(templateDocumentId);
     });
   });
 }
@@ -1136,6 +1395,133 @@ function renderEditor() {
   schedulePreview("render-editor");
 }
 
+function renderTemplateDocumentEditor(skipPreview = false) {
+  if (!state.templateDocument) {
+    renderLoading("帳票編集画面を準備中です", "対象の帳票を取得しています。");
+    return;
+  }
+
+  const document = state.templateDocument;
+  const definition = templateDefinition(document.document_family, document.template_key);
+  const bindingRows = definition.bindings
+    .map(
+      (binding) => `
+        <div class="binding-row">
+          <code>${escapeHtml(binding.key)}</code>
+          <span>${escapeHtml(binding.description)}</span>
+        </div>
+      `,
+    )
+    .join("");
+
+  app.innerHTML = `
+    <main class="shell shell--wide shell--editor">
+      <header class="masthead masthead--editor">
+        <div class="brand-block">
+          <span class="eyebrow">TEMPLATE EDITOR</span>
+          <h1 class="page-title">農作業傷害共済を編集する</h1>
+          <p class="page-lead">左で JSON を整え、右で SVG bind 結果の実際の PDF を確認します。</p>
+        </div>
+        <aside class="status-panel status-panel--editor">
+          <div class="status-grid status-grid--editor">
+            <div class="status-kv">
+              <span class="status-label">Document</span>
+              <span class="status-value">${escapeHtml(document.id)}</span>
+            </div>
+            <div class="status-kv">
+              <span class="status-label">State</span>
+              <span class="status-value" id="save-state-text">${state.saving ? "保存中…" : state.dirty ? "未保存の変更あり" : "保存済み"}</span>
+            </div>
+            <div class="status-kv">
+              <span class="status-label">Template</span>
+              <span class="status-value">${escapeHtml(`${definition.label} / ${document.template_version}`)}</span>
+            </div>
+          </div>
+        </aside>
+      </header>
+
+      <div class="editor-actions">
+        <div class="editor-actions-group">
+          <a class="ghost-link" href="/template-documents">一覧へ戻る</a>
+          <span class="badge badge--accent">${escapeHtml(familyDefinition(document.document_family).label)}</span>
+          <span class="badge badge--draft">${escapeHtml(definition.label)}</span>
+        </div>
+        <div class="editor-actions-group editor-actions-group--primary">
+          <a class="ghost-link" href="${templateDocumentPrintUrl(document.id)}" target="_blank" rel="noreferrer">印刷画面</a>
+          <button class="ghost-button" type="button" id="reload-template-document-button">再読込</button>
+          <button class="primary-button" type="button" id="save-template-document-button">保存する</button>
+        </div>
+      </div>
+
+      ${state.error ? `<div class="flash flash--error">${escapeHtml(state.error)}</div>` : ""}
+      ${state.notice ? `<div class="flash flash--info">${escapeHtml(state.notice)}</div>` : ""}
+
+      <section class="workspace editor-layout editor-layout--template">
+        <div class="editor-column">
+          <section class="card">
+            <h2 class="card-title">帳票の骨格</h2>
+            <p class="card-copy">タイトルは一覧や PDF ファイル名に使います。テンプレ版は作成時に固定済みです。</p>
+            <div class="form-grid">
+              <div class="field field--wide">
+                <label>タイトル</label>
+                <input id="template-document-title" value="${escapeHtml(document.title)}" placeholder="例: 農作業中傷害共済 加入更新調査 / 古川 司朗">
+              </div>
+              <div class="field">
+                <label>ファミリー</label>
+                <input value="${escapeHtml(familyDefinition(document.document_family).label)}" disabled>
+              </div>
+              <div class="field">
+                <label>テンプレ</label>
+                <input value="${escapeHtml(definition.label)}" disabled>
+              </div>
+              <div class="field">
+                <label>SVG 正本</label>
+                <input value="${escapeHtml(document.template_asset_path)}" disabled>
+              </div>
+              <div class="field">
+                <label>版</label>
+                <input value="${escapeHtml(document.template_version)}" disabled>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">JSON 入力</h2>
+                <p class="card-copy">保存時は JSON 構文だけ見ます。必須キー不足はプレビュー/PDF 生成時に検知します。</p>
+              </div>
+              <button class="ghost-button" type="button" id="reset-template-payload-button">初期JSONに戻す</button>
+            </div>
+            <div class="field field--wide">
+              <label>PAYLOAD JSON</label>
+              <textarea id="template-document-payload" class="json-editor" spellcheck="false">${escapeHtml(state.templatePayloadText)}</textarea>
+              <p class="field-hint">最上位は object 固定です。値は文字列で入れてください。</p>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2 class="card-title">binding キー</h2>
+            <p class="card-copy">この v1 は SVG 上で見えている <code>$...</code> 箇所だけを bind 対象にしています。</p>
+            <div class="binding-grid">${bindingRows}</div>
+          </section>
+        </div>
+
+        <aside class="preview-column">
+          <section class="preview-panel">
+            ${renderTemplateDocumentPreviewMarkup()}
+          </section>
+        </aside>
+      </section>
+    </main>
+  `;
+
+  bindTemplateDocumentEvents();
+  if (!skipPreview) {
+    schedulePreview("render-template-editor");
+  }
+}
+
 function renderPrintPage() {
   if (!state.issue) {
     renderLoading("印刷紙面を準備中です", "保存済みの案内を読込んでいます。");
@@ -1162,6 +1548,37 @@ function renderPrintPage() {
 
   bindPrintEvents();
   schedulePreview("render-print");
+}
+
+function renderTemplateDocumentPrintPage(skipPreview = false) {
+  if (!state.templateDocument) {
+    renderLoading("印刷紙面を準備中です", "保存済みの帳票を読込んでいます。");
+    return;
+  }
+
+  const document = state.templateDocument;
+  app.innerHTML = `
+    <main class="print-shell-app">
+      <header class="print-header">
+        <div>
+          <span class="eyebrow">TEMPLATE PRINT</span>
+          <h1 class="print-title">${escapeHtml(document.title || "農作業傷害共済")}</h1>
+          <p class="print-copy">${escapeHtml(templateLabel(document.document_family, document.template_key))} / ${escapeHtml(document.template_version)}</p>
+        </div>
+        <div class="preview-actions">
+          <a class="ghost-link" href="${templateDocumentEditUrl(document.id)}">編集へ戻る</a>
+        </div>
+      </header>
+      <section class="print-preview-panel">
+        ${renderTemplateDocumentPreviewMarkup()}
+      </section>
+    </main>
+  `;
+
+  bindPrintEvents();
+  if (!skipPreview) {
+    schedulePreview("render-template-print");
+  }
 }
 
 function updatePreviewDom() {
@@ -1198,7 +1615,15 @@ async function rasterizePreview(bytes) {
 }
 
 function schedulePreview(reason = "") {
-  if (!state.issue || (boot.view !== "edit" && boot.view !== "print")) {
+  const previewableView =
+    boot.view === "edit" ||
+    boot.view === "print" ||
+    boot.view === "template-edit" ||
+    boot.view === "template-print";
+  if (!previewableView) {
+    return;
+  }
+  if (!state.issue && !state.templateDocument) {
     return;
   }
   window.clearTimeout(state.previewTimer);
@@ -1210,7 +1635,7 @@ function schedulePreview(reason = "") {
 }
 
 async function generatePreview(reason = "", { forceDownload = false } = {}) {
-  if (!state.issue) {
+  if (!state.issue && !state.templateDocument) {
     return;
   }
 
@@ -1219,7 +1644,10 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
   const generation = ++state.previewGeneration;
 
   try {
-    const { bytes } = await buildNoticePdfDocument(state.issue, state.blocks, state.paperFontScale);
+    const { bytes } =
+      boot.view === "template-edit" || boot.view === "template-print"
+        ? await buildTemplateDocumentPdfDocument(state.templateDocument, parseTemplatePayloadText())
+        : await buildNoticePdfDocument(state.issue, state.blocks, state.paperFontScale);
     if (generation !== state.previewGeneration) {
       return;
     }
@@ -1240,7 +1668,7 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
     updatePreviewDom();
 
     if (forceDownload) {
-      downloadBytes(bytes, pdfFileName(state.issue));
+      downloadBytes(bytes, currentPdfFileName());
     }
   } catch (error) {
     if (generation !== state.previewGeneration) {
@@ -1252,8 +1680,12 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
     updatePreviewDom();
     if (boot.view === "edit") {
       renderEditor();
+    } else if (boot.view === "template-edit") {
+      renderTemplateDocumentEditor(true);
     } else if (boot.view === "print") {
       renderPrintPage();
+    } else if (boot.view === "template-print") {
+      renderTemplateDocumentPrintPage(true);
     }
   }
 }
@@ -1269,9 +1701,20 @@ function downloadBytes(bytes, filename) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function currentPdfFileName() {
+  if (!state.templateDocument) {
+    return pdfFileName(state.issue);
+  }
+  try {
+    return templateDocumentPdfFileName(state.templateDocument, parseTemplatePayloadText());
+  } catch {
+    return templateDocumentPdfFileName(state.templateDocument, state.templateDocument.payload);
+  }
+}
+
 async function downloadNoticePdf() {
   if (state.previewBytes) {
-    downloadBytes(state.previewBytes, pdfFileName(state.issue));
+    downloadBytes(state.previewBytes, currentPdfFileName());
     return;
   }
   await generatePreview("download", { forceDownload: true });
@@ -1584,6 +2027,56 @@ function bindEditEvents() {
   });
 }
 
+function bindTemplateDocumentEvents() {
+  bindPreviewButtons();
+
+  document.querySelector("#reload-template-document-button")?.addEventListener("click", async () => {
+    await loadTemplateDocumentEditor();
+  });
+
+  document.querySelector("#save-template-document-button")?.addEventListener("click", async () => {
+    await saveTemplateDocumentEditor();
+  });
+
+  document.querySelector("#reset-template-payload-button")?.addEventListener("click", () => {
+    if (!state.templateDocument) {
+      return;
+    }
+    const payload = defaultTemplatePayload(
+      state.templateDocument.document_family,
+      state.templateDocument.template_key,
+    );
+    state.templatePayloadText = templatePayloadText(
+      state.templateDocument.document_family,
+      state.templateDocument.template_key,
+      payload,
+    );
+    if (!String(state.templateDocument.title || "").trim()) {
+      state.templateDocument.title = templateDocumentAutoTitle(
+        state.templateDocument.document_family,
+        state.templateDocument.template_key,
+        payload,
+      );
+    }
+    markDirty();
+    renderTemplateDocumentEditor();
+  });
+
+  document.querySelector("#template-document-title")?.addEventListener("input", (event) => {
+    if (!state.templateDocument) {
+      return;
+    }
+    state.templateDocument.title = event.currentTarget.value;
+    markDirty();
+  });
+
+  document.querySelector("#template-document-payload")?.addEventListener("input", (event) => {
+    state.templatePayloadText = event.currentTarget.value;
+    markDirty();
+    schedulePreview("template-json");
+  });
+}
+
 async function createIssue(issueType) {
   state.error = "";
   state.notice = "";
@@ -1594,6 +2087,25 @@ async function createIssue(issueType) {
       body: { issue_type: issueType },
     });
     window.location.href = `/issues/${response.id}/edit`;
+  } catch (error) {
+    state.error = error.message;
+    renderIndex();
+  }
+}
+
+async function createTemplateDocument(documentFamily, templateKey) {
+  state.error = "";
+  state.notice = "";
+  renderIndex();
+  try {
+    const response = await api("/api/template-documents", {
+      method: "POST",
+      body: {
+        document_family: documentFamily,
+        template_key: templateKey,
+      },
+    });
+    window.location.href = templateDocumentEditUrl(response.id);
   } catch (error) {
     state.error = error.message;
     renderIndex();
@@ -1635,13 +2147,41 @@ async function deleteIssue(issueId) {
   renderIndex();
 }
 
+async function deleteTemplateDocument(templateDocumentId) {
+  if (!window.confirm("この帳票を削除しますか？JSON 下書きも元に戻せません。")) {
+    return;
+  }
+
+  state.error = "";
+  state.notice = "";
+  renderIndex();
+  try {
+    await api(`/api/template-documents/${encodeURIComponent(templateDocumentId)}`, {
+      method: "DELETE",
+    });
+    state.templateDocuments = state.templateDocuments.filter(
+      (document) => document.id !== templateDocumentId,
+    );
+    state.notice = "帳票を削除しました。";
+  } catch (error) {
+    state.error = error.message;
+  }
+  renderIndex();
+}
+
 async function loadIndex() {
   state.loading = true;
-  renderLoading("常会案内を読込中です", "一覧と作成パネルを準備しています。");
+  renderLoading("文書ファミリーを読込中です", "常会案内と農作業傷害共済の一覧を準備しています。");
   try {
-    const [meta, issues] = await Promise.all([api("/api/meta"), api("/api/issues")]);
+    const [meta, issues, templateDocuments] = await Promise.all([
+      api("/api/meta"),
+      api("/api/issues"),
+      api("/api/template-documents"),
+    ]);
     state.meta = meta;
     state.issues = issues;
+    state.templateDocuments = templateDocuments.map(normalizeTemplateDocument);
+    state.activeFamily = normalizeFamilyKey(boot.familyTab || state.activeFamily);
     state.loading = false;
     renderIndex();
   } catch (error) {
@@ -1656,6 +2196,16 @@ async function loadIssueDocument() {
   state.issue = normalizeIssue(documentPayload.issue);
   state.blocks = documentPayload.blocks.map(normalizeBlock);
   ensureSelectedAttachment();
+}
+
+async function loadTemplateDocument() {
+  const response = await api(`/api/template-documents/${boot.templateDocumentId}`);
+  state.templateDocument = normalizeTemplateDocument(response.document);
+  state.templatePayloadText = templatePayloadText(
+    state.templateDocument.document_family,
+    state.templateDocument.template_key,
+    state.templateDocument.payload,
+  );
 }
 
 async function loadEditor() {
@@ -1696,6 +2246,44 @@ async function loadPrint() {
   }
 }
 
+async function loadTemplateDocumentEditor() {
+  state.loading = true;
+  state.error = "";
+  state.notice = "";
+  renderLoading("帳票編集画面を読込中です", "JSON 下書きと SVG テンプレ情報を取得しています。");
+  try {
+    const [meta] = await Promise.all([api("/api/meta"), loadTemplateDocument()]);
+    state.meta = meta;
+    state.loading = false;
+    state.dirty = false;
+    state.previewBytes = null;
+    state.previewImages = [];
+    state.previewReadyAt = "";
+    renderTemplateDocumentEditor();
+  } catch (error) {
+    state.loading = false;
+    state.error = error.message;
+    renderTemplateDocumentEditor();
+  }
+}
+
+async function loadTemplateDocumentPrint() {
+  state.loading = true;
+  renderLoading("印刷紙面を読込中です", "保存済みの帳票データを取得しています。");
+  try {
+    await loadTemplateDocument();
+    state.loading = false;
+    state.previewBytes = null;
+    state.previewImages = [];
+    state.previewReadyAt = "";
+    renderTemplateDocumentPrintPage();
+  } catch (error) {
+    state.loading = false;
+    state.error = error.message;
+    app.innerHTML = `<main class="print-shell-app"><div class="flash flash--error">${escapeHtml(error.message)}</div></main>`;
+  }
+}
+
 async function saveEditor() {
   if (!boot.issueId || state.saving) {
     return false;
@@ -1724,30 +2312,79 @@ async function saveEditor() {
   }
 }
 
+async function saveTemplateDocumentEditor() {
+  if (!boot.templateDocumentId || state.saving || !state.templateDocument) {
+    return false;
+  }
+  let payload;
+  try {
+    payload = parseTemplatePayloadText();
+  } catch (error) {
+    state.error = error.message;
+    renderTemplateDocumentEditor(true);
+    return false;
+  }
+
+  state.saving = true;
+  state.error = "";
+  state.notice = "";
+  renderTemplateDocumentEditor();
+  try {
+    const response = await api(`/api/template-documents/${boot.templateDocumentId}`, {
+      method: "PUT",
+      body: {
+        title: state.templateDocument.title,
+        payload,
+      },
+    });
+    state.templateDocument = normalizeTemplateDocument(response.document);
+    state.templatePayloadText = templatePayloadText(
+      state.templateDocument.document_family,
+      state.templateDocument.template_key,
+      state.templateDocument.payload,
+    );
+    state.templateDocuments = state.templateDocuments
+      .filter((document) => document.id !== state.templateDocument.id)
+      .concat(state.templateDocument)
+      .sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
+    state.dirty = false;
+    state.notice = "保存しました。";
+    return true;
+  } catch (error) {
+    state.error = error.message;
+    return false;
+  } finally {
+    state.saving = false;
+    renderTemplateDocumentEditor();
+  }
+}
+
 async function openPrintPageFromEditor() {
-  if (boot.view !== "edit" || printShortcutPending) {
+  if ((boot.view !== "edit" && boot.view !== "template-edit") || printShortcutPending) {
     return;
   }
-  if (!state.issue?.id && !boot.issueId) {
+  if (!state.issue?.id && !boot.issueId && !state.templateDocument?.id && !boot.templateDocumentId) {
     return;
   }
 
   printShortcutPending = true;
   try {
     if (state.dirty) {
-      const saved = await saveEditor();
+      const saved =
+        boot.view === "template-edit" ? await saveTemplateDocumentEditor() : await saveEditor();
       if (!saved) {
         return;
       }
     }
-    window.location.href = printPageUrl();
+    window.location.href =
+      boot.view === "template-edit" ? templateDocumentPrintUrl() : printPageUrl();
   } finally {
     printShortcutPending = false;
   }
 }
 
 window.addEventListener("beforeunload", (event) => {
-  if (state.dirty && boot.view === "edit") {
+  if (state.dirty && (boot.view === "edit" || boot.view === "template-edit")) {
     event.preventDefault();
     event.returnValue = "";
   }
@@ -1758,7 +2395,7 @@ window.addEventListener("keydown", (event) => {
     (event.ctrlKey || event.metaKey) &&
     !event.altKey &&
     String(event.key || "").toLowerCase() === "p";
-  if (!isPrintShortcut || boot.view !== "edit") {
+  if (!isPrintShortcut || (boot.view !== "edit" && boot.view !== "template-edit")) {
     return;
   }
   event.preventDefault();
@@ -1795,6 +2432,10 @@ if (boot.view === "edit" && boot.issueId) {
   loadEditor();
 } else if (boot.view === "print" && boot.issueId) {
   loadPrint();
+} else if (boot.view === "template-edit" && boot.templateDocumentId) {
+  loadTemplateDocumentEditor();
+} else if (boot.view === "template-print" && boot.templateDocumentId) {
+  loadTemplateDocumentPrint();
 } else {
   loadIndex();
 }

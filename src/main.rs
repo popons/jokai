@@ -13,6 +13,7 @@ use clap::{ArgAction, Args, Parser, Subcommand, ValueHint};
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use include_dir::{Dir, include_dir};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsStr;
@@ -51,6 +52,12 @@ const FRONTEND_FONT_TITLE: &str = "title.ttf";
 const CURRENT_LAYOUT_VERSION: &str = "notice-pdf-layout-v2";
 const CURRENT_FONT_VERSION: &str = "noto-sans-jp-static-v2";
 const CURRENT_RENDERER_VERSION: &str = "pdfme-raster-v2";
+const FAMILY_TAB_ISSUES: &str = "issues";
+const TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI: &str = "shogai_kyosai";
+const TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL: &str = "join_renewal";
+const TEMPLATE_DOCUMENT_ASSET_PATH_SHOGAI_KYOSAI: &str = "20260319-templ-shogai-kyosai.svg";
+const TEMPLATE_DOCUMENT_VERSION_SHOGAI_KYOSAI: &str = "20260319";
+const TEMPLATE_DOCUMENT_STATUS_DRAFT: &str = "draft";
 const NOTICE_PREVIEW_RENDER_DPI: u16 = 216;
 static EMBEDDED_FRONTEND_DIST: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/web-dist");
 static EMBEDDED_PAPER_FONT_BODY_BYTES: &[u8] = include_bytes!(concat!(
@@ -255,6 +262,59 @@ struct DuplicateIssueResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct TemplateDocumentListItem {
+  id: String,
+  document_family: String,
+  template_key: String,
+  status: String,
+  title: String,
+  template_asset_path: String,
+  template_version: String,
+  updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TemplateDocumentResponse {
+  document: TemplateDocumentDetail,
+}
+
+#[derive(Debug, Serialize)]
+struct TemplateDocumentDetail {
+  id: String,
+  document_family: String,
+  template_key: String,
+  status: String,
+  title: String,
+  template_asset_path: String,
+  template_version: String,
+  payload: serde_json::Value,
+  created_at: Option<String>,
+  updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTemplateDocumentPayload {
+  document_family: String,
+  template_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SaveTemplateDocumentPayload {
+  title: String,
+  payload: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateTemplateDocumentResponse {
+  id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DeleteTemplateDocumentResponse {
+  id: String,
+}
+
+#[derive(Debug, Serialize)]
 struct PreviewRenderResponse {
   images: Vec<String>,
 }
@@ -325,6 +385,15 @@ struct SaveItemSupplementPayload {
 struct NormalizedItemSupplement {
   tone: String,
   content: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TemplateDocumentDescriptor {
+  document_family: &'static str,
+  template_key: &'static str,
+  title_prefix: &'static str,
+  template_asset_path: &'static str,
+  template_version: &'static str,
 }
 
 /* unsafe impl standard traits  **************************************************************************/
@@ -532,6 +601,76 @@ fn duplicate_issue_title(title: &str) -> String {
   format!("{trimmed}（複製）")
 }
 
+fn resolve_template_document_descriptor(
+  document_family: &str,
+  template_key: &str,
+) -> std::result::Result<TemplateDocumentDescriptor, (StatusCode, String)> {
+  match (document_family, template_key) {
+    (TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI, TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL) => {
+      Ok(TemplateDocumentDescriptor {
+        document_family: TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI,
+        template_key: TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL,
+        title_prefix: "農作業中傷害共済 加入更新調査",
+        template_asset_path: TEMPLATE_DOCUMENT_ASSET_PATH_SHOGAI_KYOSAI,
+        template_version: TEMPLATE_DOCUMENT_VERSION_SHOGAI_KYOSAI,
+      })
+    }
+    _ => Err(api_bad_request(format!(
+      "unsupported template document `{document_family}/{template_key}`"
+    ))),
+  }
+}
+
+fn default_template_document_payload(descriptor: TemplateDocumentDescriptor) -> serde_json::Value {
+  match (descriptor.document_family, descriptor.template_key) {
+    (TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI, TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL) => json!({
+      "contract_holder": "",
+      "age_previous": "",
+      "age_current": "",
+      "ending_disability": "",
+      "ending_medical": "",
+      "ending_date": "",
+      "ending_premium": "",
+    }),
+    _ => json!({}),
+  }
+}
+
+fn template_payload_string_value(payload: &serde_json::Value, key: &str) -> String {
+  payload
+    .get(key)
+    .and_then(|value| value.as_str())
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .unwrap_or_default()
+    .to_string()
+}
+
+fn default_template_document_title(
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> String {
+  let contract_holder = template_payload_string_value(payload, "contract_holder");
+  if contract_holder.is_empty() {
+    format!("{} / 契約者未設定", descriptor.title_prefix)
+  } else {
+    format!("{} / {}", descriptor.title_prefix, contract_holder)
+  }
+}
+
+fn normalize_template_document_title(
+  raw_title: &str,
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> String {
+  let trimmed = raw_title.trim();
+  if trimmed.is_empty() {
+    default_template_document_title(descriptor, payload)
+  } else {
+    trimmed.to_string()
+  }
+}
+
 fn normalize_month_value(raw: &str) -> String {
   let trimmed = raw.trim();
   if trimmed.len() == 7 {
@@ -702,18 +841,28 @@ fn remove_issue_runtime_artifacts(runtime_dir: &Path, issue_id: &str) {
   let _ = fs::remove_dir_all(issue_generated_dir(runtime_dir, issue_id));
 }
 
-fn app_shell(view: &str, issue_id: Option<&str>, print_mode: bool) -> Html<String> {
+fn app_shell(
+  view: &str,
+  issue_id: Option<&str>,
+  template_document_id: Option<&str>,
+  print_mode: bool,
+  family_tab: Option<&str>,
+) -> Html<String> {
   let issue_id_attr = issue_id.unwrap_or("");
+  let template_document_id_attr = template_document_id.unwrap_or("");
+  let family_tab_attr = family_tab.unwrap_or(FAMILY_TAB_ISSUES);
   let page_title = match view {
     "edit" => "jokai editor",
     "print" => "jokai print",
+    "template-edit" => "jokai template editor",
+    "template-print" => "jokai template print",
     _ => "jokai composer",
   };
   let print_attr = if print_mode { "1" } else { "0" };
   let asset_version = BUILD_TIMESTAMP_UTC;
 
   Html(format!(
-    "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{page_title}</title><link rel=\"stylesheet\" href=\"/assets/app.css?v={asset_version}\"></head><body data-print-mode=\"{print_attr}\"><div id=\"app\" data-view=\"{view}\" data-issue-id=\"{issue_id_attr}\" data-print-mode=\"{print_attr}\"></div><script type=\"module\" src=\"/assets/app.js?v={asset_version}\"></script></body></html>"
+    "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{page_title}</title><link rel=\"stylesheet\" href=\"/assets/app.css?v={asset_version}\"></head><body data-print-mode=\"{print_attr}\"><div id=\"app\" data-view=\"{view}\" data-issue-id=\"{issue_id_attr}\" data-template-document-id=\"{template_document_id_attr}\" data-family-tab=\"{family_tab_attr}\" data-print-mode=\"{print_attr}\"></div><script type=\"module\" src=\"/assets/app.js?v={asset_version}\"></script></body></html>"
   ))
 }
 
@@ -1600,6 +1749,49 @@ async fn fetch_issue_document(
   Ok(Some(IssueDocumentResponse { issue, blocks }))
 }
 
+async fn fetch_template_document(
+  client: &Client,
+  template_document_id: &str,
+) -> std::result::Result<Option<TemplateDocumentResponse>, tokio_postgres::Error> {
+  let row = client
+    .query_opt(
+      "select
+         id::text,
+         document_family,
+         template_key,
+         status,
+         title,
+         template_asset_path,
+         template_version,
+         payload,
+         to_char(created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+         to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+       from template_documents
+       where id::text = $1",
+      &[&template_document_id],
+    )
+    .await?;
+
+  let Some(row) = row else {
+    return Ok(None);
+  };
+
+  Ok(Some(TemplateDocumentResponse {
+    document: TemplateDocumentDetail {
+      id: row.get::<_, String>(0),
+      document_family: row.get::<_, String>(1),
+      template_key: row.get::<_, String>(2),
+      status: row.get::<_, String>(3),
+      title: row.get::<_, String>(4),
+      template_asset_path: row.get::<_, String>(5),
+      template_version: row.get::<_, String>(6),
+      payload: row.get::<_, serde_json::Value>(7),
+      created_at: row.get::<_, Option<String>>(8),
+      updated_at: row.get::<_, Option<String>>(9),
+    },
+  }))
+}
+
 async fn run_db_init(args: DbArgs) -> Result<()> {
   let database_name = ensure_database_exists(&args).await?;
   let client = connect_postgres(&args.database_url).await?;
@@ -1721,15 +1913,65 @@ async fn run_db_reset(args: DbResetArgs) -> Result<()> {
 }
 
 async fn index_page() -> impl IntoResponse {
-  app_shell("index", None, false)
+  app_shell("index", None, None, false, Some(FAMILY_TAB_ISSUES))
+}
+
+async fn issues_index_page() -> impl IntoResponse {
+  app_shell("index", None, None, false, Some(FAMILY_TAB_ISSUES))
+}
+
+async fn template_documents_index_page() -> impl IntoResponse {
+  app_shell(
+    "index",
+    None,
+    None,
+    false,
+    Some(TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI),
+  )
 }
 
 async fn issue_edit_page(RoutePath(issue_id): RoutePath<String>) -> impl IntoResponse {
-  app_shell("edit", Some(&issue_id), false)
+  app_shell(
+    "edit",
+    Some(&issue_id),
+    None,
+    false,
+    Some(FAMILY_TAB_ISSUES),
+  )
 }
 
 async fn issue_print_page(RoutePath(issue_id): RoutePath<String>) -> impl IntoResponse {
-  app_shell("print", Some(&issue_id), true)
+  app_shell(
+    "print",
+    Some(&issue_id),
+    None,
+    true,
+    Some(FAMILY_TAB_ISSUES),
+  )
+}
+
+async fn template_document_edit_page(
+  RoutePath(template_document_id): RoutePath<String>,
+) -> impl IntoResponse {
+  app_shell(
+    "template-edit",
+    None,
+    Some(&template_document_id),
+    false,
+    Some(TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI),
+  )
+}
+
+async fn template_document_print_page(
+  RoutePath(template_document_id): RoutePath<String>,
+) -> impl IntoResponse {
+  app_shell(
+    "template-print",
+    None,
+    Some(&template_document_id),
+    true,
+    Some(TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI),
+  )
 }
 
 async fn healthz() -> impl IntoResponse {
@@ -1963,6 +2205,174 @@ async fn api_create_issue(
     .map_err(|err| api_internal(err.to_string()))?;
 
   Ok(Json(CreateIssueResponse { id: row.get(0) }))
+}
+
+async fn api_template_documents(
+  State(state): State<Arc<AppState>>,
+) -> ApiResult<Vec<TemplateDocumentListItem>> {
+  let rows = state
+    .client
+    .query(
+      "select
+         id::text,
+         document_family,
+         template_key,
+         status,
+         title,
+         template_asset_path,
+         template_version,
+         to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+       from template_documents
+       order by updated_at desc, created_at desc
+       limit 100",
+      &[],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  let documents = rows
+    .into_iter()
+    .map(|row| TemplateDocumentListItem {
+      id: row.get::<_, String>(0),
+      document_family: row.get::<_, String>(1),
+      template_key: row.get::<_, String>(2),
+      status: row.get::<_, String>(3),
+      title: row.get::<_, String>(4),
+      template_asset_path: row.get::<_, String>(5),
+      template_version: row.get::<_, String>(6),
+      updated_at: row.get::<_, Option<String>>(7),
+    })
+    .collect::<Vec<_>>();
+
+  Ok(Json(documents))
+}
+
+async fn api_create_template_document(
+  State(state): State<Arc<AppState>>,
+  Json(payload): Json<CreateTemplateDocumentPayload>,
+) -> ApiResult<CreateTemplateDocumentResponse> {
+  let descriptor =
+    resolve_template_document_descriptor(&payload.document_family, &payload.template_key)?;
+  let default_payload = default_template_document_payload(descriptor);
+  let title = default_template_document_title(descriptor, &default_payload);
+
+  let row = state
+    .client
+    .query_one(
+      "insert into template_documents (
+         document_family,
+         template_key,
+         status,
+         title,
+         template_asset_path,
+         template_version,
+         payload
+       )
+       values ($1, $2, $3, $4, $5, $6, $7)
+       returning id::text",
+      &[
+        &descriptor.document_family,
+        &descriptor.template_key,
+        &TEMPLATE_DOCUMENT_STATUS_DRAFT,
+        &title,
+        &descriptor.template_asset_path,
+        &descriptor.template_version,
+        &default_payload,
+      ],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  Ok(Json(CreateTemplateDocumentResponse { id: row.get(0) }))
+}
+
+async fn api_template_document_detail(
+  State(state): State<Arc<AppState>>,
+  RoutePath(template_document_id): RoutePath<String>,
+) -> ApiResult<TemplateDocumentResponse> {
+  let document = fetch_template_document(&state.client, &template_document_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .ok_or_else(|| api_not_found("template document not found"))?;
+
+  Ok(Json(document))
+}
+
+async fn api_template_document_save(
+  State(state): State<Arc<AppState>>,
+  RoutePath(template_document_id): RoutePath<String>,
+  Json(payload): Json<SaveTemplateDocumentPayload>,
+) -> ApiResult<TemplateDocumentResponse> {
+  let row = state
+    .client
+    .query_opt(
+      "select document_family, template_key, status
+       from template_documents
+       where id::text = $1",
+      &[&template_document_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  let Some(row) = row else {
+    return Err(api_not_found("template document not found"));
+  };
+
+  let descriptor =
+    resolve_template_document_descriptor(&row.get::<_, String>(0), &row.get::<_, String>(1))?;
+  let _status = row.get::<_, String>(2);
+  let title = normalize_template_document_title(&payload.title, descriptor, &payload.payload);
+
+  state
+    .client
+    .execute(
+      "update template_documents
+       set title = $1,
+           payload = $2
+       where id::text = $3",
+      &[&title, &payload.payload, &template_document_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  let document = fetch_template_document(&state.client, &template_document_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .ok_or_else(|| api_not_found("template document not found after save"))?;
+
+  Ok(Json(document))
+}
+
+async fn api_template_document_delete(
+  State(state): State<Arc<AppState>>,
+  RoutePath(template_document_id): RoutePath<String>,
+) -> ApiResult<DeleteTemplateDocumentResponse> {
+  let exists = state
+    .client
+    .query_opt(
+      "select 1 from template_documents where id::text = $1",
+      &[&template_document_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .is_some();
+
+  if !exists {
+    return Err(api_not_found("template document not found"));
+  }
+
+  state
+    .client
+    .execute(
+      "delete from template_documents where id::text = $1",
+      &[&template_document_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  Ok(Json(DeleteTemplateDocumentResponse {
+    id: template_document_id,
+  }))
 }
 
 async fn api_issue_detail(
@@ -3169,9 +3579,18 @@ async fn run_web(args: WebArgs) -> Result<()> {
 
   let app = Router::new()
     .route("/", get(index_page))
-    .route("/issues", get(index_page))
+    .route("/issues", get(issues_index_page))
     .route("/issues/{id}/edit", get(issue_edit_page))
     .route("/issues/{id}/print", get(issue_print_page))
+    .route("/template-documents", get(template_documents_index_page))
+    .route(
+      "/template-documents/{id}/edit",
+      get(template_document_edit_page),
+    )
+    .route(
+      "/template-documents/{id}/print",
+      get(template_document_print_page),
+    )
     .route("/assets/app.css", get(app_css))
     .route("/assets/app.js", get(app_js))
     .route("/assets/fonts/{file_name}", get(font_asset))
@@ -3190,6 +3609,16 @@ async fn run_web(args: WebArgs) -> Result<()> {
         .delete(api_issue_delete),
     )
     .route("/api/issues/{id}/duplicate", post(api_issue_duplicate))
+    .route(
+      "/api/template-documents",
+      get(api_template_documents).post(api_create_template_document),
+    )
+    .route(
+      "/api/template-documents/{id}",
+      get(api_template_document_detail)
+        .put(api_template_document_save)
+        .delete(api_template_document_delete),
+    )
     .route(
       "/api/blocks/{id}/attachments",
       axum::routing::post(api_block_attachment_upload),

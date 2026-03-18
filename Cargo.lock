@@ -786,6 +786,7 @@ dependencies = [
  "color-eyre",
  "include_dir",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -1070,6 +1071,8 @@ dependencies = [
  "bytes",
  "fallible-iterator",
  "postgres-protocol",
+ "serde_core",
+ "serde_json",
 ]
 
 [[package]]
