@@ -41,7 +41,6 @@ const BUILD_TIMESTAMP_UTC: &str = env!("BUILD_TIMESTAMP_UTC");
 const DEFAULT_DATABASE_URL: &str = "postgresql://postgres:postgres@10.0.0.100:5432/jokai";
 const DEFAULT_DATABASE_ADMIN_URL: &str = "postgresql://postgres:postgres@10.0.0.100:5432/postgres";
 const DEFAULT_BIND: &str = "0.0.0.0:12040";
-const DEFAULT_STORAGE_DIR: &str = "data";
 const DEFAULT_MEETING_PLACE: &str = "平古場自治公民館";
 const MIGRATION_TABLE: &str = "app_schema_migrations";
 const FRONTEND_APP_CSS: &str = "app.css";
@@ -93,13 +92,6 @@ struct WebArgs {
   database_url: String,
   #[arg(long, env = "JOKAI_BIND", default_value = DEFAULT_BIND)]
   bind: String,
-  #[arg(
-    long,
-    env = "JOKAI_STORAGE_DIR",
-    default_value = DEFAULT_STORAGE_DIR,
-    value_hint = ValueHint::DirPath
-  )]
-  storage_dir: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -118,13 +110,8 @@ struct DbArgs {
     default_value = DEFAULT_DATABASE_ADMIN_URL
   )]
   admin_database_url: String,
-  #[arg(
-    long,
-    env = "JOKAI_STORAGE_DIR",
-    default_value = DEFAULT_STORAGE_DIR,
-    value_hint = ValueHint::DirPath
-  )]
-  storage_dir: PathBuf,
+  #[arg(long, env = "JOKAI_LEGACY_STORAGE_DIR", value_hint = ValueHint::DirPath)]
+  legacy_storage_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -138,7 +125,7 @@ struct DbResetArgs {
 #[derive(Debug, Clone)]
 struct AppState {
   client: Arc<Client>,
-  storage_dir: PathBuf,
+  runtime_dir: PathBuf,
   database_url_redacted: String,
   applied_migrations: Arc<Vec<String>>,
   #[allow(dead_code)]
@@ -152,7 +139,7 @@ struct AppState {
 struct MetaResponse {
   app: &'static str,
   database_url: String,
-  storage_dir: String,
+  runtime_dir: String,
   applied_migrations: Vec<String>,
 }
 
@@ -385,19 +372,21 @@ fn bundled_font_bytes(file_name: &str) -> Result<&'static [u8]> {
   }
 }
 
-fn ensure_storage_dirs(storage_dir: &Path) -> Result<()> {
-  fs::create_dir_all(storage_dir.join("issues"))
-    .with_context(|| format!("failed to create {}", storage_dir.join("issues").display()))?;
-  fs::create_dir_all(storage_dir.join("generated")).with_context(|| {
+fn default_runtime_dir() -> PathBuf {
+  env::temp_dir().join("jokai-runtime")
+}
+
+fn ensure_runtime_dirs(runtime_dir: &Path) -> Result<()> {
+  fs::create_dir_all(runtime_dir.join("generated")).with_context(|| {
     format!(
       "failed to create {}",
-      storage_dir.join("generated").display()
+      runtime_dir.join("generated").display()
     )
   })?;
-  fs::create_dir_all(preview_render_root(storage_dir)).with_context(|| {
+  fs::create_dir_all(preview_render_root(runtime_dir)).with_context(|| {
     format!(
       "failed to create {}",
-      preview_render_root(storage_dir).display()
+      preview_render_root(runtime_dir).display()
     )
   })?;
   Ok(())
@@ -548,17 +537,12 @@ fn unique_upload_stem() -> String {
     .to_string()
 }
 
-fn preview_render_root(storage_dir: &Path) -> PathBuf {
-  storage_dir.join("preview-renders")
+fn preview_render_root(runtime_dir: &Path) -> PathBuf {
+  runtime_dir.join("preview-renders")
 }
 
-fn issue_storage_dir(storage_dir: &Path, issue_id: &str) -> PathBuf {
-  storage_dir.join("issues").join(issue_id)
-}
-
-fn remove_issue_storage_artifacts(storage_dir: &Path, issue_id: &str) {
-  let _ = fs::remove_dir_all(issue_storage_dir(storage_dir, issue_id));
-  let _ = fs::remove_dir_all(issue_generated_dir(storage_dir, issue_id));
+fn remove_issue_runtime_artifacts(runtime_dir: &Path, issue_id: &str) {
+  let _ = fs::remove_dir_all(issue_generated_dir(runtime_dir, issue_id));
 }
 
 fn app_shell(view: &str, issue_id: Option<&str>, print_mode: bool) -> Html<String> {
@@ -770,7 +754,7 @@ async fn fetch_attachment_original_bytes(
   }
 
   let Some(bytes) =
-    read_legacy_attachment_file(&state.storage_dir, &metadata.legacy_original_path)?
+    read_legacy_attachment_file(&state.runtime_dir, &metadata.legacy_original_path)?
   else {
     return Err(api_internal(
       "attachment original is missing from database and legacy storage",
@@ -818,7 +802,7 @@ fn render_pdf_thumbnail_png(
     ));
   };
 
-  let job_dir = preview_render_root(&state.storage_dir).join(format!("{attachment_id}-thumb"));
+  let job_dir = preview_render_root(&state.runtime_dir).join(format!("{attachment_id}-thumb"));
   let _ = fs::remove_dir_all(&job_dir);
   fs::create_dir_all(&job_dir).map_err(|err| api_internal(err.to_string()))?;
 
@@ -870,7 +854,7 @@ async fn fetch_attachment_thumbnail_bytes(
   }
 
   if let Some(bytes) =
-    read_legacy_attachment_file(&state.storage_dir, &metadata.legacy_thumbnail_path)?
+    read_legacy_attachment_file(&state.runtime_dir, &metadata.legacy_thumbnail_path)?
   {
     let mime_type = legacy_thumbnail_mime_type(&metadata);
     upsert_attachment_thumbnail_cache(&state.client, attachment_id, &mime_type, &bytes).await?;
@@ -966,6 +950,21 @@ async fn backfill_legacy_attachment_storage(client: &Client, storage_dir: &Path)
   }
 
   Ok(migrated_rows)
+}
+
+async fn run_legacy_backfill_if_configured(client: &Client, args: &DbArgs) -> Result<usize> {
+  let Some(legacy_storage_dir) = &args.legacy_storage_dir else {
+    return Ok(0);
+  };
+
+  if !legacy_storage_dir.exists() {
+    bail!(
+      "legacy storage dir does not exist: {}",
+      legacy_storage_dir.display()
+    );
+  }
+
+  backfill_legacy_attachment_storage(client, legacy_storage_dir).await
 }
 
 async fn connect_postgres(url: &str) -> Result<Client> {
@@ -1091,8 +1090,8 @@ async fn ensure_attachment_thumbnail(
 }
 
 #[allow(dead_code)]
-fn issue_generated_dir(storage_dir: &Path, issue_id: &str) -> PathBuf {
-  storage_dir.join("generated").join(issue_id)
+fn issue_generated_dir(runtime_dir: &Path, issue_id: &str) -> PathBuf {
+  runtime_dir.join("generated").join(issue_id)
 }
 
 #[allow(dead_code)]
@@ -1162,7 +1161,7 @@ async fn generate_issue_pdf(
     ));
   };
 
-  let output_dir = issue_generated_dir(&state.storage_dir, issue_id);
+  let output_dir = issue_generated_dir(&state.runtime_dir, issue_id);
   fs::create_dir_all(&output_dir).map_err(|err| api_internal(err.to_string()))?;
   let file_name = format!("notice-{}.pdf", unique_upload_stem());
   let output_path = output_dir.join(&file_name);
@@ -1190,7 +1189,7 @@ async fn generate_issue_pdf(
       .map_err(|err| api_internal(err.to_string()))?;
   }
   let relative_path = output_path
-    .strip_prefix(&state.storage_dir)
+    .strip_prefix(&state.runtime_dir)
     .map(|path| path.to_string_lossy().to_string())
     .unwrap_or_else(|_| output_path.to_string_lossy().to_string());
 
@@ -1394,15 +1393,21 @@ async fn fetch_issue_document(
 }
 
 async fn run_db_init(args: DbArgs) -> Result<()> {
-  ensure_storage_dirs(&args.storage_dir)?;
   let database_name = ensure_database_exists(&args).await?;
   let client = connect_postgres(&args.database_url).await?;
   let applied_now = apply_migrations(&client, &manifest_db_dir()).await?;
-  let backfilled = backfill_legacy_attachment_storage(&client, &args.storage_dir).await?;
+  let backfilled = run_legacy_backfill_if_configured(&client, &args).await?;
 
   println!("database: {database_name}");
   println!("database_url: {}", redact_database_url(&args.database_url));
-  println!("storage_dir: {}", args.storage_dir.display());
+  println!(
+    "legacy_storage_dir: {}",
+    args
+      .legacy_storage_dir
+      .as_ref()
+      .map(|path| path.display().to_string())
+      .unwrap_or_else(|| "<none>".to_string())
+  );
   println!("attachment_backfilled_rows: {backfilled}");
   if applied_now.is_empty() {
     println!("migrations_applied: 0");
@@ -1419,10 +1424,17 @@ async fn run_db_init(args: DbArgs) -> Result<()> {
 async fn run_db_migrate(args: DbArgs) -> Result<()> {
   let client = connect_postgres(&args.database_url).await?;
   let applied_now = apply_migrations(&client, &manifest_db_dir()).await?;
-  let backfilled = backfill_legacy_attachment_storage(&client, &args.storage_dir).await?;
+  let backfilled = run_legacy_backfill_if_configured(&client, &args).await?;
 
   println!("database_url: {}", redact_database_url(&args.database_url));
-  println!("storage_dir: {}", args.storage_dir.display());
+  println!(
+    "legacy_storage_dir: {}",
+    args
+      .legacy_storage_dir
+      .as_ref()
+      .map(|path| path.display().to_string())
+      .unwrap_or_else(|| "<none>".to_string())
+  );
   println!("attachment_backfilled_rows: {backfilled}");
   if applied_now.is_empty() {
     println!("migrations_applied: 0");
@@ -1453,7 +1465,14 @@ async fn run_db_status(args: DbArgs) -> Result<()> {
     "admin_database_url: {}",
     redact_database_url(&args.admin_database_url)
   );
-  println!("storage_dir: {}", args.storage_dir.display());
+  println!(
+    "legacy_storage_dir: {}",
+    args
+      .legacy_storage_dir
+      .as_ref()
+      .map(|path| path.display().to_string())
+      .unwrap_or_else(|| "<none>".to_string())
+  );
   println!("database_exists: {exists}");
 
   if !exists {
@@ -1600,7 +1619,7 @@ async fn api_preview_rasterize(
     return Err(api_bad_request("preview PDF file is missing"));
   };
 
-  let job_dir = preview_render_root(&state.storage_dir).join(unique_upload_stem());
+  let job_dir = preview_render_root(&state.runtime_dir).join(unique_upload_stem());
   fs::create_dir_all(&job_dir).map_err(|err| api_internal(err.to_string()))?;
   let input_pdf = job_dir.join("preview.pdf");
   let output_prefix = job_dir.join("page");
@@ -1669,7 +1688,7 @@ async fn api_meta(State(state): State<Arc<AppState>>) -> impl IntoResponse {
   Json(MetaResponse {
     app: "jokai",
     database_url: state.database_url_redacted.clone(),
-    storage_dir: state.storage_dir.display().to_string(),
+    runtime_dir: state.runtime_dir.display().to_string(),
     applied_migrations: state.applied_migrations.as_ref().clone(),
   })
 }
@@ -2290,14 +2309,9 @@ async fn duplicate_issue_children(
         &thumb_bytes,
       )
       .await?;
-    } else if let Some(legacy_thumb_bytes) =
-      read_legacy_attachment_file(&state.storage_dir, &legacy_thumbnail_path)?
+    } else if let Ok((thumb_mime, legacy_thumb_bytes)) =
+      fetch_attachment_thumbnail_bytes(state.as_ref(), &source_attachment_id).await
     {
-      let thumb_mime = if attachment_display_kind(&mime_type) == "pdf" {
-        "image/png".to_string()
-      } else {
-        mime_type.clone()
-      };
       upsert_attachment_thumbnail_cache(
         &state.client,
         &duplicated_attachment_id,
@@ -2316,6 +2330,7 @@ async fn duplicate_issue_children(
     }
 
     let _ = legacy_original_path;
+    let _ = legacy_thumbnail_path;
   }
 
   Ok(())
@@ -2349,7 +2364,7 @@ async fn api_issue_delete(
     .await
     .map_err(|err| api_internal(err.to_string()))?;
 
-  remove_issue_storage_artifacts(&state.storage_dir, &issue_id);
+  remove_issue_runtime_artifacts(&state.runtime_dir, &issue_id);
 
   Ok(Json(DeleteIssueResponse { id: issue_id }))
 }
@@ -2450,7 +2465,7 @@ async fn api_issue_duplicate(
         &[&duplicated_issue_id],
       )
       .await;
-    remove_issue_storage_artifacts(&state.storage_dir, &duplicated_issue_id);
+    remove_issue_runtime_artifacts(&state.runtime_dir, &duplicated_issue_id);
     return Err(err);
   }
 
@@ -2793,10 +2808,10 @@ async fn shutdown_signal() {
 }
 
 async fn run_web(args: WebArgs) -> Result<()> {
-  ensure_storage_dirs(&args.storage_dir)?;
+  let runtime_dir = default_runtime_dir();
+  ensure_runtime_dirs(&runtime_dir)?;
   let client = Arc::new(connect_postgres(&args.database_url).await?);
   let applied_now = apply_migrations(&client, &manifest_db_dir()).await?;
-  let backfilled = backfill_legacy_attachment_storage(&client, &args.storage_dir).await?;
   let applied_migrations = Arc::new(list_applied_migrations(&client).await?);
   let bind = args
     .bind
@@ -2807,7 +2822,7 @@ async fn run_web(args: WebArgs) -> Result<()> {
 
   let state = Arc::new(AppState {
     client,
-    storage_dir: args.storage_dir.clone(),
+    runtime_dir: runtime_dir.clone(),
     database_url_redacted: redact_database_url(&args.database_url),
     applied_migrations,
     loopback_base_url,
@@ -2866,13 +2881,11 @@ async fn run_web(args: WebArgs) -> Result<()> {
       applied_now.len()
     );
   }
-  if backfilled > 0 {
-    info!("backfilled {backfilled} legacy attachment rows into database storage");
-  }
   info!(
     "paper versions layout={} font={} renderer={}",
     CURRENT_LAYOUT_VERSION, CURRENT_FONT_VERSION, CURRENT_RENDERER_VERSION
   );
+  info!("runtime temp dir: {}", runtime_dir.display());
   info!("jokai web listening on http://{bind}");
   axum::serve(listener, app)
     .with_graceful_shutdown(shutdown_signal())

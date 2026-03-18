@@ -98,7 +98,7 @@ pythonコマンドないので、python3コマンドを使ってね
 
 ## Repo Map
 
-- `src/main.rs`: Axum エントリポイント。埋め込み frontend asset / 紙面用フォント配信、issue CRUD、issue の draft 限定削除、一覧からの深い複製、添付の DB 保存と legacy filesystem からの自動吸い上げ、`pdftoppm` によるプレビュー画像化、`/issues/{id}/print` の印刷 shell 配信を担当。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
+- `src/main.rs`: Axum エントリポイント。埋め込み frontend asset / 紙面用フォント配信、issue CRUD、issue の draft 限定削除、一覧からの深い複製、添付の DB 保存、内部 temp dir を使う preview / thumbnail 生成、`/issues/{id}/print` の印刷 shell 配信を担当。legacy filesystem 吸い上げは `db init` / `db migrate` の明示 `--legacy-storage-dir` 側へ分離した。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
 - `web-src/main.js`: 一覧画面と編集画面の UI、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、添付ビューア、item 添付欄での Clipboard 画像登録導線を担当。
 - `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計をここで守る。
 - `web-src/app.css`: 編集UIとプレビューUIの見た目。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
@@ -126,6 +126,7 @@ pythonコマンドないので、python3コマンドを使ってね
 - `npm run build`: `web-src/` から `web-dist/` を再生成する。
 - `cargo fmt`: 変更後に実行が必要。
 - `./db-init.sh` / `./db-migrate.sh` / `./db-status.sh` / `./db-reset.sh`: DB 操作用スクリプト。
+- 旧 filesystem 添付を DB へ吸い上げるときだけ `JOKAI_LEGACY_STORAGE_DIR=/path/to/data ./db-migrate.sh` のように明示する。`web` 実行や `./watch-run-server.sh` は `storage-dir` に依存しない。
 - `./watch-run-server.sh` / `./watch-all.sh`: 監視実行用スクリプト。
 - ただし Codex は上の Rust ルールを優先し、手動で `cargo run` / `cargo check` / `cargo build` / `cargo clippy` を叩かないこと。
 

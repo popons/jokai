@@ -229,3 +229,4 @@
 - 2026-03-18 23:37:21 +0900 [再起動確認] 指示どおり `./watch-run-server.sh` を再起動。新コードで `/assets/fonts/body.ttf` は 200、対象添付は 0 バイト誤判定を除去した結果 500 に戻り、残る実ブロッカーが暗号化 `data.zip` だけであることを確認。
 - 2026-03-18 23:41:33 +0900 [復旧完了] 復号済み `data/` 配置後に再度 `./watch-run-server.sh` を再起動。対象 issue `e773...` の 3 添付は `/content` `/thumbnail` とも 200 に復帰し、DB `attachment_original_contents` にも実バイト長で backfill されたことを確認。監視ログも正常。
 - 2026-03-19 00:03:13 +0900 [codified-context] `codified-context-maintenance` で routing 監査を実施し、`AGENTS.md` に紙面フォント導線と `bundled-assets/fonts/README.md` の Context Routing を追記。`context/repo-map.md` には `source_version` / `published_*_version` と起動時 legacy backfill を追記。
+- 2026-03-19 00:13:24 +0900 [単一バイナリ調整] `web` 実行から `--storage-dir` を除去し、runtime temp dir を `/tmp/jokai-runtime` 自動決定へ変更。legacy filesystem 添付の吸い上げは `db init` / `db migrate` の `--legacy-storage-dir` 明示時だけに分離し、`./watch-run-server.sh` 再起動後の起動行と `/api/meta` で確認。

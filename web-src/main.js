@@ -760,8 +760,8 @@ function renderIndex() {
               <span class="status-value">${escapeHtml(state.meta?.database_url || "読込中")}</span>
             </div>
             <div class="status-kv">
-              <span class="status-label">Storage</span>
-              <span class="status-value">${escapeHtml(state.meta?.storage_dir || "読込中")}</span>
+              <span class="status-label">Runtime Temp</span>
+              <span class="status-value">${escapeHtml(state.meta?.runtime_dir || "読込中")}</span>
             </div>
             <div class="status-kv">
               <span class="status-label">Migrations</span>

@@ -16,7 +16,7 @@
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、issue 一覧 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存と legacy filesystem 吸い上げ、`pdftoppm` によるプレビュー画像化、印刷用 shell 配信。server-side 最終PDFコードは残るが現状は本線外 |
+| `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、issue 一覧 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
 | `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、添付ビューア、item 添付欄での Clipboard 画像登録 |
 | `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体 |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
@@ -100,7 +100,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 | Endpoint | Responsibility |
 |---|---|
 | `GET /issues/{id}/print` | 印刷用 shell。編集画面の `印刷画面` 導線と `Ctrl+P` / `Cmd+P` が集約される |
-| `GET /api/meta` | DB 接続情報の簡易メタ返却 |
+| `GET /api/meta` | DB 接続情報と runtime temp dir の簡易メタ返却 |
 | `GET/POST /api/issues` | issue 一覧と新規作成 |
 | `GET/PUT/DELETE /api/issues/{id}` | issue 詳細取得、保存、draft 限定削除 |
 | `POST /api/issues/{id}/duplicate` | issue / block / item / attachment を深い複製し、複製先の新しい issue id を返す |
@@ -113,7 +113,8 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 
 ## Startup Notes
 
-- `run_web()` は起動時に DB migration を適用し、legacy filesystem 添付が残っていれば `attachment_original_contents` / `attachment_thumbnail_caches` へ自動吸い上げする。
+- `run_web()` は起動時に DB migration を適用し、preview / thumbnail 用の internal temp dir を確保する。`web` 実行は `--storage-dir` に依存しない。
+- legacy filesystem 添付の吸い上げは `db init` / `db migrate` に `--legacy-storage-dir` を明示したときだけ実行する。
 - filesystem 上の `data/issues/...` は互換吸い上げ元であり、長期的な正本ではない。新規 upload の正本は DB blob 側。
 
 ## Verification Notes
