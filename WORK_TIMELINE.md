@@ -190,3 +190,13 @@
 - 2026-03-18 20:31:41 +0900 [codified-context] 提案確定。新規 asset は作らず、AGENTS.md と context/repo-map.md の追記修正で実装追従を反映する。
 - 2026-03-18 20:32:32 +0900 [codified-context] AGENTS.md と context/repo-map.md を更新し、一覧の削除/複製導線、draft 限定削除、添付の深い複製を codified context に反映。
 - 2026-03-18 20:33:03 +0900 [git] 実装差分と codified context 更新をコミット予定。commit message は Add issue duplicate and delete actions。
+- 2026-03-18 20:34:46 +0900 [調査] Clipboard画像登録の要件定義を開始。`build-error.txt` と `test-error.txt` を確認し、現時点では `cargo check` / `cargo test` ともに失敗なし。
+- 2026-03-18 20:35:15 +0900 [調査] `web-src/main.js` の `data-upload-item` 変更イベントと `src/main.rs` の `POST /api/items/{id}/attachments` を確認。Clipboard画像は `File/Blob` 化して同APIへ送る再利用余地が大きい。
+- 2026-03-18 20:35:15 +0900 [調査] `clippy-error.txt` は成功、`build-error-win.txt` は未生成で不在。現時点で既知のビルド失敗ログは見当たらない。
+- 2026-03-18 20:36:20 +0900 [要件] Clipboard画像登録の一次回答を受領。起点は添付欄フォーカス中の貼り付けと明示ボタンの併用、対象は画像Blobのみ、命名は `clipboard-YYYYMMDD-HHMMSS.*`、サイズ制限は既存準拠、対応範囲はPCの主要ブラウザ想定。
+- 2026-03-18 20:37:08 +0900 [要件] 追加回答を受領。Clipboard API ボタン失敗時は添付欄での貼り付けを案内し、Clipboard に複数画像がある場合は先頭1枚のみ登録する方針で確定。
+- 2026-03-18 20:45:06 +0900 [実装] `web-src/main.js` に Clipboard画像の命名・画像抽出・既存添付API再利用ヘルパを追加し、`paste` と `Clipboardから追加` ボタンを item 添付欄に配線。
+- 2026-03-18 20:45:06 +0900 [実装] `web-src/app.css` に貼り付け欄・補助ボタン・説明文のスタイルを追加。狭幅では1列に落として編集密度を維持する構成にした。
+- 2026-03-18 20:45:51 +0900 [検証] `npm run build` は成功。`cargo fmt` も実行済みで、保存後の `build-error.txt` / `test-error.txt` / `clippy-error.txt` に失敗なし、`build-error-win.txt` は未生成のまま。
+- 2026-03-18 20:53:13 +0900 [codified-context] `codified-context-maintenance` を implementation-followup として起動。監査スクリプトは source change に対する `AGENTS.md` / `context` 側の追従不足を検出。
+- 2026-03-18 20:53:13 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` に Clipboard画像添付の current truth を追記。3導線が既存 `POST /api/items/{id}/attachments` に収束する点と確認観点を明文化。

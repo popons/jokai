@@ -589,6 +589,13 @@ button {
   gap: 6px;
 }
 
+.attachment-input-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
 .upload-dropzone {
   display: grid;
   place-items: center;
@@ -603,6 +610,51 @@ button {
 
 .upload-dropzone input {
   display: none;
+}
+
+.attachment-paste-target {
+  display: grid;
+  gap: 2px;
+  align-content: center;
+  min-height: 54px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px dashed rgba(91, 124, 240, 0.34);
+  background: rgba(239, 245, 255, 0.96);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.attachment-paste-target strong {
+  font-size: 0.93rem;
+}
+
+.attachment-paste-target small,
+.attachment-hint {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.attachment-paste-target:focus-visible {
+  outline: 2px solid rgba(79, 115, 227, 0.34);
+  outline-offset: 1px;
+  border-color: rgba(79, 115, 227, 0.52);
+}
+
+.attachment-paste-target.is-disabled {
+  cursor: default;
+  opacity: 0.65;
+  border-color: rgba(129, 146, 177, 0.24);
+  background: rgba(248, 251, 255, 0.92);
+}
+
+.attachment-clipboard-button {
+  min-width: 152px;
+}
+
+.attachment-hint {
+  margin: 0;
+  font-size: 0.86rem;
 }
 
 .attachment-list {
@@ -884,6 +936,14 @@ button {
   .editor-actions-group--primary {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .attachment-input-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .attachment-clipboard-button {
+    width: 100%;
   }
 }
 

@@ -283,6 +283,177 @@ function selectedAttachment() {
   return allAttachments().find((attachment) => attachment.id === state.selectedAttachmentId) || null;
 }
 
+function fileExtensionFromMimeType(mimeType = "") {
+  const normalized = String(mimeType || "")
+    .toLowerCase()
+    .split(";")[0]
+    .trim();
+  const knownExtensions = {
+    "image/apng": "apng",
+    "image/avif": "avif",
+    "image/bmp": "bmp",
+    "image/gif": "gif",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/svg+xml": "svg",
+    "image/tiff": "tiff",
+    "image/webp": "webp",
+  };
+  if (knownExtensions[normalized]) {
+    return knownExtensions[normalized];
+  }
+  if (!normalized.startsWith("image/")) {
+    return "bin";
+  }
+  const fallback = normalized.slice("image/".length).replace(/[^a-z0-9]+/g, "");
+  return fallback || "img";
+}
+
+function clipboardTimestamp(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function clipboardFileName(mimeType = "") {
+  return `clipboard-${clipboardTimestamp()}.${fileExtensionFromMimeType(mimeType)}`;
+}
+
+function ensureNamedFile(fileOrBlob, fallbackName = clipboardFileName(fileOrBlob?.type)) {
+  if (fileOrBlob instanceof File && fileOrBlob.name) {
+    return fileOrBlob;
+  }
+  return new File([fileOrBlob], fallbackName, {
+    type: fileOrBlob?.type || "application/octet-stream",
+    lastModified: Date.now(),
+  });
+}
+
+function firstClipboardImageFileFromDataTransfer(dataTransfer) {
+  const items = Array.from(dataTransfer?.items || []);
+  for (const item of items) {
+    if (item.kind !== "file" || !String(item.type || "").toLowerCase().startsWith("image/")) {
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file) {
+      return ensureNamedFile(file, clipboardFileName(file.type));
+    }
+  }
+
+  const files = Array.from(dataTransfer?.files || []);
+  const file = files.find((candidate) =>
+    String(candidate.type || "").toLowerCase().startsWith("image/"),
+  );
+  return file ? ensureNamedFile(file, clipboardFileName(file.type)) : null;
+}
+
+async function firstClipboardImageFileFromNavigator() {
+  if (!navigator.clipboard || typeof navigator.clipboard.read !== "function") {
+    const error = new Error("clipboard-read-unsupported");
+    error.code = "clipboard-read-unsupported";
+    throw error;
+  }
+
+  const clipboardItems = await navigator.clipboard.read();
+  for (const clipboardItem of clipboardItems) {
+    const imageType = Array.from(clipboardItem.types || []).find((type) =>
+      String(type || "").toLowerCase().startsWith("image/"),
+    );
+    if (!imageType) {
+      continue;
+    }
+    const blob = await clipboardItem.getType(imageType);
+    return ensureNamedFile(blob, clipboardFileName(imageType));
+  }
+
+  const error = new Error("clipboard-image-missing");
+  error.code = "clipboard-image-missing";
+  throw error;
+}
+
+function clipboardReadFailureMessage(error) {
+  if (error?.code === "clipboard-read-unsupported") {
+    return "このブラウザでは Clipboard ボタン取得が使えません。添付欄を選択して Ctrl+V / Cmd+V で貼り付けしてください。";
+  }
+  if (error?.code === "clipboard-image-missing") {
+    return "Clipboard に画像がありません。画像をコピーしてから、添付欄を選択して Ctrl+V / Cmd+V で貼り付けしてください。";
+  }
+  return "Clipboard から画像を取得できませんでした。添付欄を選択して Ctrl+V / Cmd+V で貼り付けしてください。";
+}
+
+async function uploadAttachmentFile(itemId, file, successMessage = "資料を追加しました。") {
+  if (!itemId || !file) {
+    return false;
+  }
+
+  state.error = "";
+  state.notice = "";
+  renderEditor();
+
+  try {
+    const normalizedFile = ensureNamedFile(file, clipboardFileName(file.type));
+    const formData = new FormData();
+    formData.append("file", normalizedFile, normalizedFile.name);
+    const documentPayload = await api(`/api/items/${itemId}/attachments`, {
+      method: "POST",
+      body: formData,
+    });
+    state.issue = normalizeIssue(documentPayload.issue);
+    state.blocks = documentPayload.blocks.map(normalizeBlock);
+    state.notice = successMessage;
+    ensureSelectedAttachment();
+    return true;
+  } catch (error) {
+    state.error = error.message;
+    return false;
+  } finally {
+    renderEditor();
+  }
+}
+
+async function uploadClipboardImageFromPaste(itemId, clipboardEvent) {
+  if (!itemId) {
+    return false;
+  }
+
+  const file = firstClipboardImageFileFromDataTransfer(clipboardEvent.clipboardData);
+  if (!file) {
+    state.notice = "";
+    state.error = "Clipboard に画像がありません。画像をコピーしてから、添付欄で貼り付けしてください。";
+    renderEditor();
+    return false;
+  }
+
+  return uploadAttachmentFile(itemId, file, "Clipboard の画像を追加しました。");
+}
+
+async function uploadClipboardImageFromButton(itemId) {
+  if (!itemId) {
+    return false;
+  }
+
+  state.error = "";
+  state.notice = "";
+
+  try {
+    const file = await firstClipboardImageFileFromNavigator();
+    return await uploadAttachmentFile(itemId, file, "Clipboard の画像を追加しました。");
+  } catch (error) {
+    state.error = clipboardReadFailureMessage(error);
+    renderEditor();
+    return false;
+  }
+}
+
+function clipboardPasteItemIdFromNode(node) {
+  if (!(node instanceof Element)) {
+    return "";
+  }
+  return node.closest("[data-paste-item-id]")?.getAttribute("data-paste-item-id") || "";
+}
+
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   let body = options.body;
@@ -371,6 +542,7 @@ function itemMarker(index) {
 
 function renderAttachmentList(item, blockIndex, itemIndex) {
   const attachments = item.attachments || [];
+  const itemId = item.id ? escapeHtml(item.id) : "";
   const items = attachments.length
     ? attachments
         .map(
@@ -389,10 +561,31 @@ function renderAttachmentList(item, blockIndex, itemIndex) {
 
   return `
     <div class="attachment-block">
-      <label class="upload-dropzone">
-        <input data-upload-item="${blockIndex}:${itemIndex}" type="file" accept="application/pdf,image/*" ${item.id ? "" : "disabled"}>
-        <span>${item.id ? "PDF / 画像を追加" : "保存後に資料追加できます"}</span>
-      </label>
+      <div class="attachment-input-grid">
+        <label class="upload-dropzone">
+          <input data-upload-item-id="${itemId}" type="file" accept="application/pdf,image/*" ${item.id ? "" : "disabled"}>
+          <span>${item.id ? "PDF / 画像を追加" : "保存後に資料追加できます"}</span>
+        </label>
+        <div
+          class="attachment-paste-target ${item.id ? "" : "is-disabled"}"
+          data-paste-item-id="${itemId}"
+          tabindex="${item.id ? "0" : "-1"}"
+          aria-disabled="${item.id ? "false" : "true"}"
+        >
+          <strong>ここで貼り付け</strong>
+          <small>${item.id ? "Ctrl+V / Cmd+V で画像を追加" : "保存後に貼り付けできます"}</small>
+        </div>
+        <button
+          class="ghost-button attachment-clipboard-button"
+          type="button"
+          data-clipboard-upload-item-id="${itemId}"
+          data-paste-item-id="${itemId}"
+          ${item.id ? "" : "disabled"}
+        >
+          Clipboardから追加
+        </button>
+      </div>
+      <p class="attachment-hint">Clipboard は画像のみ対応、複数画像がある場合は先頭1枚だけ登録します。</p>
       <ul class="attachment-list">${items}</ul>
     </div>
   `;
@@ -1164,34 +1357,29 @@ function bindEditEvents() {
     });
   });
 
-  document.querySelectorAll("[data-upload-item]").forEach((input) => {
+  document.querySelectorAll("[data-paste-item-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      if (node instanceof HTMLElement && node.getAttribute("aria-disabled") !== "true") {
+        node.focus();
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-clipboard-upload-item-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const itemId = button.getAttribute("data-clipboard-upload-item-id") || "";
+      await uploadClipboardImageFromButton(itemId);
+    });
+  });
+
+  document.querySelectorAll("[data-upload-item-id]").forEach((input) => {
     input.addEventListener("change", async (event) => {
-      const [blockIndex, itemIndex] = String(input.getAttribute("data-upload-item"))
-        .split(":")
-        .map((value) => Number(value));
-      const item = state.blocks[blockIndex]?.items?.[itemIndex];
+      const itemId = input.getAttribute("data-upload-item-id") || "";
       const file = event.currentTarget.files?.[0];
-      if (!item?.id || !file) {
+      if (!itemId || !file) {
         return;
       }
-      state.error = "";
-      state.notice = "";
-      renderEditor();
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-        const documentPayload = await api(`/api/items/${item.id}/attachments`, {
-          method: "POST",
-          body: formData,
-        });
-        state.issue = normalizeIssue(documentPayload.issue);
-        state.blocks = documentPayload.blocks.map(normalizeBlock);
-        state.notice = "資料を追加しました。";
-        ensureSelectedAttachment();
-      } catch (error) {
-        state.error = error.message;
-      }
-      renderEditor();
+      await uploadAttachmentFile(itemId, file);
     });
   });
 }
@@ -1375,6 +1563,20 @@ window.addEventListener("keydown", (event) => {
   }
   event.preventDefault();
   void openPrintPageFromEditor();
+});
+
+window.addEventListener("paste", (event) => {
+  if (boot.view !== "edit") {
+    return;
+  }
+  const itemId =
+    clipboardPasteItemIdFromNode(event.target) ||
+    clipboardPasteItemIdFromNode(document.activeElement);
+  if (!itemId) {
+    return;
+  }
+  event.preventDefault();
+  void uploadClipboardImageFromPaste(itemId, event);
 });
 
 window.addEventListener("storage", (event) => {

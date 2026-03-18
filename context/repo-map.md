@@ -17,7 +17,7 @@
 | Path | Role |
 |---|---|
 | `src/main.rs` | Axum サーバー、API、HTML 配信、issue 一覧 CRUD、draft 限定削除、issue 深い複製、添付保存、`pdftoppm` によるプレビュー画像化、印刷用 shell 配信。server-side 最終PDFコードは残るが現状は本線外 |
-| `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、添付ビューア |
+| `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、添付ビューア、item 添付欄での Clipboard 画像登録 |
 | `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体 |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
 | `db/001_init.sql` | `issues` / `blocks` / `attachments` / `generated_files` 初期定義 |
@@ -43,6 +43,8 @@
 -> `web-src/main.js` が issue / block / attachment を state に正規化  
 -> 入力変更時に save payload を構築  
 -> `PUT /api/issues/{id}` で保存
+
+item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cmd+V`・`Clipboardから追加` ボタンの 3 導線が存在する。Clipboard 画像も新規 API ではなく既存の `POST /api/items/{id}/attachments` へ `FormData(file)` として送る。
 
 編集画面で `Ctrl+P` / `Cmd+P` が押された場合は browser 既定印刷を抑止し、未保存変更があれば保存成功を待ってから `/issues/{id}/print` へ遷移する。
 
@@ -97,7 +99,7 @@
 | `GET/POST /api/issues` | issue 一覧と新規作成 |
 | `GET/PUT/DELETE /api/issues/{id}` | issue 詳細取得、保存、draft 限定削除 |
 | `POST /api/issues/{id}/duplicate` | issue / block / item / attachment を深い複製し、複製先の新しい issue id を返す |
-| `POST /api/items/{id}/attachments` | item 添付アップロード |
+| `POST /api/items/{id}/attachments` | item 添付アップロード。ファイル選択と Clipboard 画像登録の両方がここへ集約される |
 | `DELETE /api/attachments/{id}` | 添付削除 |
 | `GET /api/attachments/{id}/content` | 添付原本 |
 | `GET /api/attachments/{id}/thumbnail` | 添付サムネ |
@@ -110,6 +112,7 @@
 - 変更後は `cargo fmt` を実行する。
 - `cargo check` / `cargo test` / `cargo clippy` はバックグラウンド監視へ委ね、保存後 1 秒待ってから `build-error.txt` / `test-error.txt` / `build-error-win.txt` / `clippy-error.txt` を読む。
 - 一覧カードの操作を触ったら、`draft` で `複製` / `削除` が出ること、`published` の `削除` が disabled のまま API でも拒否されることを確認する。
+- item 添付導線を触ったら、ファイル選択、貼り付け欄での `Ctrl+V` / `Cmd+V`、`Clipboardから追加` ボタン、本文 textarea での通常テキスト貼り付け非干渉を確認する。
 - 紙面を変える前に `docs/exmple.png` を確認し、差分の理由を説明できない変更は入れない。
 - 最終PDFの不具合は `web-src/main.js` の `downloadNoticePdf()` / `openPrintPageFromEditor()`、`web-src/notice-pdf.js`、`src/main.rs` の `/issues/{id}/print` shell を優先確認する。`/api/issues/{id}/print-pdf` は本線ではない。
 - 非印刷 editor UI のスクロールが多いときは、まず `masthead` / action-row / card 内 gap を詰める。A4 プレビュー本体を縮めてごまかさない。

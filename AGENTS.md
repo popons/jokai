@@ -99,7 +99,7 @@ pythonコマンドないので、python3コマンドを使ってね
 ## Repo Map
 
 - `src/main.rs`: Axum エントリポイント。HTML/asset 配信、issue CRUD、issue の draft 限定削除、一覧からの深い複製、添付アップロード、`pdftoppm` によるプレビュー画像化、`/issues/{id}/print` の印刷 shell 配信を担当。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
-- `web-src/main.js`: 一覧画面と編集画面の UI、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、添付ビューアを担当。
+- `web-src/main.js`: 一覧画面と編集画面の UI、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、添付ビューア、item 添付欄での Clipboard 画像登録導線を担当。
 - `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計をここで守る。
 - `web-src/app.css`: 編集UIとプレビューUIの見た目。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
 - `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `attachments` / `generated_files` を定義する。`generated_files` は legacy な server-side PDF 経路の名残でもある。
@@ -112,6 +112,7 @@ pythonコマンドないので、python3コマンドを使ってね
 - 紙面・段組み・余白・文字組みを触る前に、必ず `docs/exmple.png` と `context/repo-map.md` を読むこと。
 - 一覧画面の既存案内カード導線を触るときは、`web-src/main.js` の `renderIndex` と `src/main.rs` の `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/duplicate` をセットで確認すること。`published` の削除不可は UI と API の両方で守ること。
 - 編集画面の操作性を触るときは、`web-src/main.js` の DOM 構造と `web-src/app.css` の gap/padding/min-height を一緒に見ること。片方だけ触ると、また間延びする。
+- item 添付導線を触るときは、`web-src/main.js` のファイル選択・貼り付け・`Clipboardから追加` ボタンの 3 導線が同じ `POST /api/items/{id}/attachments` に収束している前提を崩さないこと。本文入力欄の通常貼り付けは横取りしないこと。
 - プレビュー不一致を触るときは `web-src/main.js` と `src/main.rs` の `/api/preview-renders` をセットで確認すること。
 - 最終PDFの出力不具合を触るときは、まず `web-src/main.js` の `downloadNoticePdf` / `openPrintPageFromEditor` と `web-src/notice-pdf.js` を確認し、印刷 shell は `src/main.rs` の `/issues/{id}/print` を見ること。`/api/issues/{id}/print-pdf` は廃止メッセージを返す互換導線。
 - 編集画面の印刷導線を触るときは、`web-src/main.js` の `Ctrl+P` / `Cmd+P` ハンドラと `/issues/{id}/print` への遷移を確認すること。editor 自体を browser 既定印刷へ流さないのが前提。
