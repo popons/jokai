@@ -59,6 +59,14 @@
 - 2026-03-12 14:13:22 +0900 [検証] `http://localhost:12040/issues/.../edit` と `/print` を Chrome で確認。右側は blob PDF iframe の A4 固定プレビューへ置き換わり、sample 寄りの固定紙面になった。
 - 2026-03-12 23:49:22 +0900 [コミット方針] `git status` では 38 件すべてが未追跡、`git rev-parse --verify HEAD` は失敗し初回コミット状態。topic 分割よりも「常会案内Web編集基盤の初期投入」として 1 コミットに束ねる方が履歴として自然と判断。
 - 2026-03-12 23:50:47 +0900 [コミット] root commit `0030a49` を作成。件名は `feat: 常会案内の初期Web編集基盤を追加` とし、Rust/Axum API・DB migration・Web編集UI・PDF preview/build 導線・運用補助スクリプトを初期実装として一括投入した。
+- 2026-03-12 23:57:09 +0900 [調査] `~/creat/other/codified-context-infrastructure` と `/mnt/c/Users/fuse/creat/2602.20478v1.pdf` の深掘り理解を開始。`deep-understand` スキル方針、対象ファイル一覧、PDF メタデータ、作業前エラーファイル未生成を確認。
+- 2026-03-12 23:58:41 +0900 [分析] README・`case-study/CLAUDE.md`・agent/context docs・`context-drift-check.py`・MCP server・論文 3〜5 章を照合。提案の本体は三層構成そのものより、`CLAUDE.md` のトリガ表、Tier 2 の濃いドメイン知識、Tier 3 の検索、drift 検知まで含む運用ループだと整理。
+- 2026-03-13 00:01:17 +0900 [調査] jokai 本Projectの深掘り把握を開始。`deep-understand` スキル指針、ルート構成、Rust/DB/Web 主要ファイル群、作業前エラーファイル未生成を確認。
+- 2026-03-13 00:02:29 +0900 [分析] `src/main.rs`・`db/*.sql`・`web-src/*`・`docs/exmple.png` を照合。jokai は汎用文書管理ではなく、左本文＋右サムネの定型紙面を Web 編集・DB 永続化・ブラウザ側 PDF 生成で維持する専用システムだと整理。`web-src` は現行多層 item モデル、`web/app.js` は旧単層モデルの残骸と判断。
+- 2026-03-12 23:58:18 +0900 [調査] 作業開始。`build-error.txt`系を確認し、`/mnt/c/Users/fuse/creat/2602.20478v1.pdf` は9ページ、`pdftotext` 利用可能と確認。
+- 2026-03-12 23:58:25 +0900 [調査] `deep-understand` スキル定義と `/home/fuse/creat/other/codified-context-infrastructure` の全ファイル一覧を確認。三層具体化の分析対象を README・case-study・mcp-server 中心に絞り込んだ。
+- 2026-03-12 23:59:20 +0900 [調査] `README.md`、`case-study/CLAUDE.md`、`agent-specs`、`context-docs`、`scripts`、`mcp-server` を読み、Tier1=常時ロード規約、Tier2=役割特化エージェント、Tier3=SUBSYSTEMS/AGENTS索引付きMCP検索として接続されていることを確認。SessionStart のドリフト検知と validate スクリプトが保守の中核。
+- 2026-03-12 23:58:49 +0900 [調査] `pdftotext` で本文を抽出し、1章〜6章のうち 3章（3層アーキテクチャ）、4章（評価・4事例）、5章（保守コスト・妥当性脅威）を重点確認。
 - 2026-03-14 10:56:40 +0900 [codified-context] `codified-context-introduction` 開始。導入判断に必要な3質問（目的/成熟度/優先原則）をユーザーへ確認し、Greenfield・紙面見た目厳守を前提に進行開始。
 - 2026-03-14 10:57:14 +0900 [inspection] `AGENTS.md`/`CLAUDE.md` と `build-error.txt`/`test-error.txt`/`clippy-error.txt` を確認。現時点で `cargo check`・`cargo test`・`cargo clippy` は成功しており、既存ルールは Rust 実行禁止・紙面見た目厳守・`WORK_TIMELINE.md` 即時記録が中核と把握。
 - 2026-03-14 10:57:14 +0900 [inspection] `inspect_global_codex_prereqs.py` 実行でグローバル前提は充足と確認。`codified-context-mcp` 利用可、必須スキル導入済み、`multi_agent = true` 有効のためグローバル変更提案は不要。
