@@ -88,7 +88,7 @@ pythonコマンドないので、python3コマンドを使ってね
 
 ## プロジェクト概要
 
-- 目的: 生産組合長向けの常会案内を作成する。
+- 目的: 生産組合長向けの常会案内を作成しつつ、別文書ファミリーの SVG テンプレ帳票も同じアプリで扱う。
 - 技術スタック: Rust + Axum + PostgreSQL + Vite + 素の JavaScript + `pdfme`。
 - 画面/出力の正解: `docs/exmple.png`。
 - 重要な生成境界:
@@ -96,14 +96,18 @@ pythonコマンドないので、python3コマンドを使ってね
   - 編集UIのうち印刷プレビュー以外の chrome は、余白を絞って視線移動とスクロール負荷を減らすこと。
   - 「案内PDF」は本体紙面のみ出力する。
   - 添付資料は紙面ではサムネのみ表示し、原本閲覧/ダウンロードは別導線に分離する。
+  - `農作業傷害共済` は `常会案内` と同じ `issues` 系へ混ぜず、`template_documents` 系の別保存モデルで扱う。
 
 ## Repo Map
 
-- `src/main.rs`: Axum エントリポイント。埋め込み frontend asset / 紙面用フォント配信、issue CRUD、issue の draft 限定削除、一覧からの深い複製、添付の DB 保存、内部 temp dir を使う preview / thumbnail 生成、`/issues/{id}/print` の印刷 shell 配信を担当。legacy filesystem 吸い上げは `db init` / `db migrate` の明示 `--legacy-storage-dir` 側へ分離した。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
-- `web-src/main.js`: 一覧画面と編集画面の UI、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集、`thumb_scale_percent` による項目サムネ倍率 slider を担当。
+- `src/main.rs`: Axum エントリポイント。埋め込み frontend asset / 紙面用フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、issue の draft 限定削除、一覧からの深い複製、添付の DB 保存、内部 temp dir を使う preview / thumbnail 生成、`/issues/{id}/print` と `/template-documents/{id}/print` の印刷 shell 配信を担当。legacy filesystem 吸い上げは `db init` / `db migrate` の明示 `--legacy-storage-dir` 側へ分離した。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
+- `web-src/main.js`: 文書ファミリー切替つき一覧画面、常会案内 editor、SVG テンプレ帳票 editor、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、template document の JSON editor、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集、`thumb_scale_percent` による項目サムネ倍率 slider を担当。
 - `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計、item ごとの赤/青補足行群の組版、画像実寸比を踏まえた右上基点の項目サムネ倍率反映、本文白まわりの可読性確保、halo の top padding 超過防止をここで守る。
+- `web-src/template-doc-registry.js`: `農作業傷害共済` 用テンプレ定義、binding キー、default JSON payload、タイトル自動生成規則の正本。
+- `web-src/template-doc-pdf.js`: SVG テンプレ文字列に JSON を bind し、`pdfme` の `svg` schema で 1 ページ PDF を生成する中核。required binding が空ならここで `PDF生成に必要なキーが不足しています: ...` を投げる。
 - `web-src/app.css`: 編集UIとプレビューUIの見た目。項目サムネ倍率 slider のような非印刷UIの密度もここで保つ。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
-- `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `block_item_supplements` / `attachments` に加え、`block_items.thumb_scale_percent`、添付原本の `attachment_original_contents`、サムネ cache の `attachment_thumbnail_caches`、legacy な `generated_files` を定義する。
+- `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `block_item_supplements` / `attachments` / `template_documents` に加え、`block_items.thumb_scale_percent`、添付原本の `attachment_original_contents`、サムネ cache の `attachment_thumbnail_caches`、legacy な `generated_files` を定義する。
+- `20260319-templ-shogai-kyosai.svg`: `農作業傷害共済` の v1 正本 SVG。`inkscape:label="bind:..."` を意味、`id="bind-..."` を安定参照に使う。
 - `bundled-assets/fonts/`: 紙面/PDF用にバイナリへ埋め込む固定フォントと license。`NotoSansJP-VF.ttf` は生成元で、配信用には `NotoSansJP-Regular.ttf` / `NotoSansJP-Bold.ttf` の static instance を使う。直接手編集は避け、差し替え時は license と version 方針も揃えること。
 - `web-dist/`: フロントエンドのビルド成果物。runtime ではバイナリへ埋め込んで配信するが、直接手編集しないこと。
 - `docs/exmple.png`: 紙面見本の唯一の正解。
@@ -113,6 +117,8 @@ pythonコマンドないので、python3コマンドを使ってね
 
 - 紙面・段組み・余白・文字組みを触る前に、必ず `docs/exmple.png` と `context/repo-map.md` を読むこと。
 - 一覧画面の既存案内カード導線を触るときは、`web-src/main.js` の `renderIndex` と `src/main.rs` の `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/duplicate` をセットで確認すること。`published` の削除不可は UI と API の両方で守ること。
+- `農作業傷害共済` を触るときは、`web-src/template-doc-registry.js` の template 定義、`web-src/template-doc-pdf.js` の SVG bind / PDF生成、`src/main.rs` の `/api/template-documents` と `db/007_template_documents.sql` をセットで確認すること。`issues` へ列を足して混ぜないこと。
+- `農作業傷害共済` の preview 失敗を触るときは、まず `web-src/template-doc-registry.js` の required bindings、`src/main.rs` の default payload、`web-src/main.js` の template editor 初回 `schedulePreview()` を確認すること。空 payload のまま新規作成すると、現仕様では初回表示から preview が赤エラーになる。
 - 編集画面の操作性を触るときは、`web-src/main.js` の DOM 構造と `web-src/app.css` の gap/padding/min-height を一緒に見ること。片方だけ触ると、また間延びする。
 - item 添付導線を触るときは、`web-src/main.js` のファイル選択・貼り付け・`Clipboardから追加` ボタンの 3 導線が同じ `POST /api/items/{id}/attachments` に収束している前提を崩さないこと。本文入力欄の通常貼り付けは横取りしないこと。
 - item の補足行群（赤/青）・対象者・期限・項目サムネ倍率の紙面表示を触るときは、`web-src/main.js` の補足行 UI / `meta_layout` UI / サムネ倍率 slider、`web-src/notice-pdf.js` の補足行/メタ行/サムネ描画、`src/main.rs` と `db/*.sql` の `block_item_supplements` / `block_items.meta_layout` / `block_items.thumb_scale_percent` をセットで確認すること。
@@ -122,6 +128,7 @@ pythonコマンドないので、python3コマンドを使ってね
 - 最終PDFの出力不具合を触るときは、まず `web-src/main.js` の `downloadNoticePdf` / `openPrintPageFromEditor` と `web-src/notice-pdf.js` を確認し、印刷 shell は `src/main.rs` の `/issues/{id}/print` を見ること。`/api/issues/{id}/print-pdf` は廃止メッセージを返す互換導線。
 - 編集画面の印刷導線を触るときは、`web-src/main.js` の `Ctrl+P` / `Cmd+P` ハンドラと `/issues/{id}/print` への遷移を確認すること。editor 自体を browser 既定印刷へ流さないのが前提。
 - DB 変更時は `db/*.sql`、`src/main.rs` のシリアライズ/保存処理、`web-src/main.js` の normalize/payload 生成を一緒に揃えること。
+- SVG テンプレ帳票の v1 は「JSON 構文だけ保存時に見る」「必須キー不足は PDF 生成時に見る」が前提。保存時に bind 必須キーまで確定させようとして UI を重くしないこと。
 
 ## 既知コマンド
 
@@ -138,6 +145,7 @@ pythonコマンドないので、python3コマンドを使ってね
 - `context/repo-map.md`: repo 全体の責務分界、データモデル、プレビュー経路、最終PDF経路、紙面不変条件の正本。
 - `bundled-assets/fonts/README.md`: 紙面/PDF 用に同梱する固定フォントと license の正本。フォント差し替え時はここ、`src/main.rs` の `CURRENT_FONT_VERSION`、`web-src/notice-pdf.js` を一緒に確認すること。
 - `.agents/skills/jokai-pdfme-layout/SKILL.md`: `pdfme` 紙面、見本差分、プレビュー/最終PDF不一致、footer 帯、右サムネ列、`Ctrl+P` / `印刷画面` / `案内PDFを出力` の導線を触るときに使う。
+- `20260319-templ-shogai-kyosai.svg`: `農作業傷害共済` の bind 正本。v1 は既に可視の `$...` 箇所だけが対象。
 - まだ repo-local retrieval は有効化しない。`context/` や `docs/` が増えて検索価値が出た段階で `mcp-server/registry.json` と `.codex/config.toml` の MCP 配線を追加すること。
 - React / TSX 用の project-specific skill はまだ作らない。現行フロントは素の JavaScript なので、スタックが入ってから追加判断すること。
 
@@ -148,3 +156,4 @@ pythonコマンドないので、python3コマンドを使ってね
 - 編集画面は情報密度を落としすぎないこと。header/action/card/attachment viewer の余白で作業負荷を増やす変更は避けること。
 - `pdftoppm` 依存を触るときはプレビュー系へ波及する前提で確認すること。headless Chrome 系コードは legacy なので、復活・削除・再配線は本線仕様を確認してから触ること。
 - 生成物と原本の境界を曖昧にしないこと。添付資料原本を案内PDFに混ぜる変更は、この repo の設計原則に反する。
+- `農作業傷害共済` の JSON editor は v1 の割り切り実装。専用フォームを足したくなっても、先に `template_documents` 系の責務分界を壊していないか確認すること。

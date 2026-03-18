@@ -136,6 +136,7 @@
 - 2026-03-19 02:53:35 +0900 [検証] `./watch-run-server.sh` 上で再build成功を確認。headless browser は `--no-sandbox` 指定で `/healthz` smoke までは通る一方、編集ページ probe はこの環境で不安定。clean run の network probe では `/assets/app.js` と `/api/issues/{id}` の 200 応答までは確認したが、preview 完了の自動確証までは未取得。
 - 2026-03-19 02:55:30 +0900 [保守] `codified-context-maintenance` を debug-followup として再実施。今回の durable lesson は「Top|Right は box ではなく見えている画像の右上基点」「white halo は top padding を割らない」「thumbnail 寸法測定は待ちっぱなし fallback を持つ」の3点で、新規 doc ではなく `AGENTS.md` と `context/repo-map.md` の小規模追記で十分と判断。
 - 2026-03-19 02:56:18 +0900 [保守] `AGENTS.md` と `context/repo-map.md` を更新。right-top の意味を「見えている画像自体の右上固定」と明文化し、`measureImageDataUrl()`・`pushTextSchema()`・`/api/preview-renders` 発火有無を preview 調査の起点として codified context に反映した。
+- 2026-03-19 08:32:55 +0900 [保守] `template-documents` の必須キー不足エラー調査を codified context に反映。`AGENTS.md` と `context/repo-map.md` に、new draft は required 7 キー空で作成され、現仕様では editor 初回から preview が赤エラーになり得る点を current truth として追記した。
 - 2026-03-14 14:12:47 +0900 [検証] `平古場生産組合 3月度常会の案内 (2).pdf` を再出力し `pdfinfo` で `Pages: 1` を確認。`pdftotext -layout` でも連絡先 3 行が同一ページ末尾へ並んでいる。
 - 2026-03-14 14:39:35 +0900 [実装] `web-src/main.js` に編集画面専用の `Ctrl+P` / `Cmd+P` ハンドラを追加。編集画面ではブラウザ既定印刷を抑止し、未保存変更があれば先に `saveEditor()` 成功を待ってから `/issues/{id}/print` へ遷移するようにした。
 - 2026-03-14 14:39:35 +0900 [実装] `saveEditor()` を真偽値返却へ整理し、ショートカット経由でも保存失敗時に印刷画面へ進まないようにした。
@@ -312,3 +313,17 @@
 - 2026-03-19 02:56:07 +0900 [見本確認] `docs/exmple.png` と元画像を比較し、既存の常会案内レイアウトとは別系統の「表帳票テンプレート」機能として考える必要があると判断。
 - 2026-03-19 02:57:05 +0900 [設計観点] 単発差し込み `$keiyakusha` と繰り返し行の表現は別問題であり、単一の KVS/EAV モデルだけで吸収すると破綻しやすいと判断。
 - 2026-03-19 02:57:05 +0900 [外部確認] pdfme 公式仕様も確認し、テンプレートが `basePdf + schema`、SVG/table/custom schema が候補になることを把握。
+- 2026-03-19 02:57:05 +0900 [現行実装] 現在のフロントは `@pdfme/* 5.5.8` を利用し、`web-src/notice-pdf.js` の `buildNoticePdfDocument()` から `generate()` でPDFを組み立てていることを確認。
+- 2026-03-19 03:06:36 +0900 [要件整理] SVGテンプレは `$a` のような可視プレースホルダを当面使えても、長期的には `id` や `inkscape:label` に bind 情報を持たせる設計へ寄せるのが妥当と整理。
+- 2026-03-19 03:08:33 +0900 [SVG運用] `xxx.svg` の `<text>` 要素にも `id` が付与されており、bind 正本は `inkscape:label`、安定参照は `id` の二層構成にする方針が妥当と整理。
+- 2026-03-19 03:11:23 +0900 [境界確認] 現行の新規作成導線と API は `issue_type` を `normal/correction/no_meeting/one_off` に固定しており、「農作業中傷害共済」は既存常会案内の派生か別文書系かを先に決める必要があると確認。
+- 2026-03-19 03:16:49 +0900 [SVG整備] `xxx.svg` を `20260319-templ-shogai-kyosai.svg` として整理し、主要差し込みノードに `inkscape:label="bind:..."` と安定 `id` を付与。`cargo fmt` 実行後も build/test/clippy の監視エラーは見当たらず。
+- 2026-03-19 03:16:49 +0900 [要件確定] 農作業傷害共済テンプレ v1 の bind 対象は、SVG 上で既に可視になっている `$...` 差し込み箇所のみに限定する方針で確定。
+- 2026-03-19 03:16:49 +0900 [要件確定] 農作業傷害共済 v1 の入力経路は、テンプレ専用フォームではなく JSON を貼る/編集する簡易画面とし、入力データは 1件ぶんを `jsonb` 1カラムで保持する方針で確定。
+- 2026-03-19 03:16:49 +0900 [進め方修正] 要件確認の質問が細かく分かれ過ぎていたため、以後は前回答に依存しない論点を一括でまとめて確認する進め方へ修正。
+- 2026-03-19 03:24:00 +0900 [要件確定] 農作業傷害共済 v1 はトップから文書ファミリー選択で入り、ファミリー別タブ一覧、JSONライブプレビュー編集、保存時はJSON構文のみ許容して必須キー不足はPDF生成時に検知、PDFは都度生成のみ、タイトルは自動生成を初期値にして手編集可、テンプレ版は文書作成時に固定、状態は `draft` のみとする方針で確定。
+- 2026-03-19 03:40:49 +0900 [実装] `template_documents` テーブルと `/api/template-documents` 系 CRUD、`/template-documents/{id}/edit|print`、family tabs 付きトップ一覧、JSON editor、SVG bind PDF 生成 (`web-src/template-doc-pdf.js`) を追加。
+- 2026-03-19 03:40:49 +0900 [検証] `npm run build` 成功、`cargo fmt` 実行済み。監視ファイルは `build-error.txt` / `test-error.txt` 正常、`clippy-error.txt` 空、`build-error-win.txt` は未生成。
+- 2026-03-19 03:43:18 +0900 [検証開始] 監視エラーファイル正常を確認し、`./watch-run-server.sh` 起動と localhost 動作確認ループへ入る。
+- 2026-03-19 03:47:17 +0900 [検証継続] 修正反映後の再ビルド完了を確認し、`常会案内` と `農作業傷害共済` の両系統を UI 経路で再検証するループを継続。
+- 2026-03-19 03:51:16 +0900 [動作確認] headless Chrome + CDP で `農作業傷害共済` の作成→JSON入力→ライブプレビュー→保存→印刷画面→API保存確認→削除、および `常会案内` の作成→編集プレビュー→印刷画面→削除まで通過。
