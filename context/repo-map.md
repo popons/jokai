@@ -1,4 +1,4 @@
-<!-- v1 | last-verified: 2026-03-14 -->
+<!-- v1 | last-verified: 2026-03-18 -->
 # Jokai Repo Map
 
 ## Overview
@@ -16,8 +16,8 @@
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | Axum サーバー、API、HTML 配信、添付保存、`pdftoppm` によるプレビュー画像化、印刷用 shell 配信。server-side 最終PDFコードは残るが現状は本線外 |
-| `web-src/main.js` | 編集画面の状態管理、CRUD 呼び出し、常時プレビュー、添付ビューア |
+| `src/main.rs` | Axum サーバー、API、HTML 配信、issue 一覧 CRUD、draft 限定削除、issue 深い複製、添付保存、`pdftoppm` によるプレビュー画像化、印刷用 shell 配信。server-side 最終PDFコードは残るが現状は本線外 |
+| `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、添付ビューア |
 | `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体 |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
 | `db/001_init.sql` | `issues` / `blocks` / `attachments` / `generated_files` 初期定義 |
@@ -29,7 +29,15 @@
 
 ## Runtime Flow
 
-### 1. Editing Flow
+### 1. Index / List Actions
+
+`GET /issues`
+-> `web-src/main.js` が一覧カードを描画  
+-> `POST /api/issues` で新規作成し、編集画面へ遷移  
+-> `POST /api/issues/{id}/duplicate` で issue / block / item / attachment を深い複製し、新しい編集画面へ遷移  
+-> `DELETE /api/issues/{id}` で draft 案内のみ削除する。`published` は UI 側でボタンを disabled にし、API 側でも拒否する
+
+### 2. Editing Flow
 
 `GET /issues/{id}/edit`  
 -> `web-src/main.js` が issue / block / attachment を state に正規化  
@@ -38,7 +46,7 @@
 
 編集画面で `Ctrl+P` / `Cmd+P` が押された場合は browser 既定印刷を抑止し、未保存変更があれば保存成功を待ってから `/issues/{id}/print` へ遷移する。
 
-### 2. Preview Flow
+### 3. Preview Flow
 
 `web-src/notice-pdf.js` の `buildNoticePdfDocument(issue, blocks)`  
 -> ブラウザ内で notice PDF bytes を生成  
@@ -47,7 +55,7 @@
 -> base64 data URL を `web-src/main.js` に返却  
 -> 編集画面の常時プレビューへ表示
 
-### 3. Final PDF / Print Flow
+### 4. Final PDF / Print Flow
 
 `GET /issues/{id}/print`  
 -> サーバーが印刷用 shell HTML を返す  
@@ -77,7 +85,7 @@
 | `issues` | 案内全体 | `issue_type`, `status`, `meeting_date`, `place`, `header_note`, 最終ページ左下用 `footer_note` などを保持 |
 | `blocks` | セクション単位 | `agenda` / `submission` / `distribution` / `info` / `freeform` |
 | `block_items` | 各ブロック内の箇条項目 | `db/002_block_items.sql` で導入。旧 `blocks.body` 系からの移行先 |
-| `attachments` | 添付原本とサムネ | `item_id` 単位で紐付け。紙面には thumbnail を使う |
+| `attachments` | 添付原本とサムネ | `item_id` 単位で紐付け。紙面には thumbnail を使う。issue 複製時は原本/サムネを共有参照せず別ファイルとして複製する |
 | `generated_files` | legacy server-side PDF bookkeeping | テーブルと挿入コードは残るが、現行 browser-side 出力経路では未更新 |
 
 ## Key Endpoints
@@ -87,7 +95,8 @@
 | `GET /issues/{id}/print` | 印刷用 shell。編集画面の `印刷画面` 導線と `Ctrl+P` / `Cmd+P` が集約される |
 | `GET /api/meta` | DB 接続情報の簡易メタ返却 |
 | `GET/POST /api/issues` | issue 一覧と新規作成 |
-| `GET/PUT /api/issues/{id}` | issue 詳細取得と保存 |
+| `GET/PUT/DELETE /api/issues/{id}` | issue 詳細取得、保存、draft 限定削除 |
+| `POST /api/issues/{id}/duplicate` | issue / block / item / attachment を深い複製し、複製先の新しい issue id を返す |
 | `POST /api/items/{id}/attachments` | item 添付アップロード |
 | `DELETE /api/attachments/{id}` | 添付削除 |
 | `GET /api/attachments/{id}/content` | 添付原本 |
@@ -100,6 +109,7 @@
 - `web-src/` を触ったら `npm run build` で `web-dist/` を更新する。
 - 変更後は `cargo fmt` を実行する。
 - `cargo check` / `cargo test` / `cargo clippy` はバックグラウンド監視へ委ね、保存後 1 秒待ってから `build-error.txt` / `test-error.txt` / `build-error-win.txt` / `clippy-error.txt` を読む。
+- 一覧カードの操作を触ったら、`draft` で `複製` / `削除` が出ること、`published` の `削除` が disabled のまま API でも拒否されることを確認する。
 - 紙面を変える前に `docs/exmple.png` を確認し、差分の理由を説明できない変更は入れない。
 - 最終PDFの不具合は `web-src/main.js` の `downloadNoticePdf()` / `openPrintPageFromEditor()`、`web-src/notice-pdf.js`、`src/main.rs` の `/issues/{id}/print` shell を優先確認する。`/api/issues/{id}/print-pdf` は本線ではない。
 - 非印刷 editor UI のスクロールが多いときは、まず `masthead` / action-row / card 内 gap を詰める。A4 プレビュー本体を縮めてごまかさない。

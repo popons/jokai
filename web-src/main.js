@@ -518,7 +518,13 @@ function renderIndex() {
   const issueCards = state.issues.length
     ? state.issues
         .map(
-          (issue) => `
+          (issue) => {
+            const editHref = `/issues/${encodeURIComponent(issue.id)}/edit`;
+            const deleteDisabled = issue.status === "published";
+            const deleteAttributes = deleteDisabled
+              ? ' disabled title="公開済みの案内は削除できません"'
+              : "";
+            return `
             <article class="issue-card">
               <div class="issue-card-head">
                 <div>
@@ -533,10 +539,15 @@ function renderIndex() {
               <p class="issue-card-copy">場所: ${escapeHtml(issue.place || "未設定")} / ブロック数: ${issue.block_count}</p>
               <div class="issue-card-footer">
                 <span class="issue-card-stat">${issue.published_at ? `公開: ${escapeHtml(issue.published_at)}` : "公開前の下書き"}</span>
-                <a class="issue-link" href="/issues/${escapeHtml(issue.id)}/edit">編集へ</a>
+                <div class="issue-card-actions">
+                  <a class="issue-link" href="${editHref}">編集へ</a>
+                  <button class="ghost-button" type="button" data-duplicate-issue="${escapeHtml(issue.id)}">複製</button>
+                  <button class="ghost-button ghost-button--danger" type="button" data-delete-issue="${escapeHtml(issue.id)}"${deleteAttributes}>削除</button>
+                </div>
               </div>
             </article>
-          `,
+          `;
+          },
         )
         .join("")
     : `<div class="empty-state">まだ案内はありません。左の作成ボタンから最初の号を起こしてください。</div>`;
@@ -610,6 +621,26 @@ function renderIndex() {
     button.addEventListener("click", async () => {
       const issueType = button.getAttribute("data-create-issue");
       await createIssue(issueType);
+    });
+  });
+
+  app.querySelectorAll("[data-duplicate-issue]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const issueId = button.getAttribute("data-duplicate-issue");
+      if (!issueId) {
+        return;
+      }
+      await duplicateIssue(issueId);
+    });
+  });
+
+  app.querySelectorAll("[data-delete-issue]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const issueId = button.getAttribute("data-delete-issue");
+      if (!issueId || button.disabled) {
+        return;
+      }
+      await deleteIssue(issueId);
     });
   });
 }
@@ -1179,6 +1210,41 @@ async function createIssue(issueType) {
     state.error = error.message;
     renderIndex();
   }
+}
+
+async function duplicateIssue(issueId) {
+  state.error = "";
+  state.notice = "";
+  renderIndex();
+  try {
+    const response = await api(`/api/issues/${encodeURIComponent(issueId)}/duplicate`, {
+      method: "POST",
+    });
+    window.location.href = `/issues/${encodeURIComponent(response.id)}/edit`;
+  } catch (error) {
+    state.error = error.message;
+    renderIndex();
+  }
+}
+
+async function deleteIssue(issueId) {
+  if (!window.confirm("この案内を削除しますか？添付資料も含めて元に戻せません。")) {
+    return;
+  }
+
+  state.error = "";
+  state.notice = "";
+  renderIndex();
+  try {
+    await api(`/api/issues/${encodeURIComponent(issueId)}`, {
+      method: "DELETE",
+    });
+    state.issues = state.issues.filter((issue) => issue.id !== issueId);
+    state.notice = "案内を削除しました。";
+  } catch (error) {
+    state.error = error.message;
+  }
+  renderIndex();
 }
 
 async function loadIndex() {

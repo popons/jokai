@@ -272,7 +272,8 @@ button {
 .issue-card-meta,
 .preview-actions,
 .add-row,
-.editor-actions-group {
+.editor-actions-group,
+.issue-card-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -863,6 +864,16 @@ button {
 
   .status-grid--editor {
     grid-template-columns: 1fr;
+  }
+
+  .issue-card-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .issue-card-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .editor-actions {

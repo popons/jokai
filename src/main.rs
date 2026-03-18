@@ -5,7 +5,7 @@ use axum::{
   extract::{DefaultBodyLimit, Multipart, Path as RoutePath, State},
   http::{StatusCode, header},
   response::{Html, IntoResponse},
-  routing::{delete, get},
+  routing::{delete, get, post},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{DateTime, Local, Utc};
@@ -219,6 +219,16 @@ struct CreateIssuePayload {
 
 #[derive(Debug, Serialize)]
 struct CreateIssueResponse {
+  id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DeleteIssueResponse {
+  id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DuplicateIssueResponse {
   id: String,
 }
 
@@ -478,6 +488,14 @@ fn default_issue_title(issue_type: &str) -> &'static str {
   }
 }
 
+fn duplicate_issue_title(title: &str) -> String {
+  let trimmed = title.trim();
+  if trimmed.is_empty() {
+    return "案内（複製）".to_string();
+  }
+  format!("{trimmed}（複製）")
+}
+
 fn normalize_month_value(raw: &str) -> String {
   let trimmed = raw.trim();
   if trimmed.len() == 7 {
@@ -525,6 +543,80 @@ fn unique_upload_stem() -> String {
 
 fn preview_render_root(storage_dir: &Path) -> PathBuf {
   storage_dir.join("preview-renders")
+}
+
+fn issue_storage_dir(storage_dir: &Path, issue_id: &str) -> PathBuf {
+  storage_dir.join("issues").join(issue_id)
+}
+
+fn remove_issue_storage_artifacts(storage_dir: &Path, issue_id: &str) {
+  let _ = fs::remove_dir_all(issue_storage_dir(storage_dir, issue_id));
+  let _ = fs::remove_dir_all(issue_generated_dir(storage_dir, issue_id));
+}
+
+fn duplicate_attachment_relative_dir(
+  issue_id: &str,
+  block_id: &str,
+  item_id: Option<&str>,
+) -> PathBuf {
+  PathBuf::from("issues")
+    .join(issue_id)
+    .join("attachments")
+    .join(block_id)
+    .join(
+      item_id
+        .filter(|value| !value.is_empty())
+        .unwrap_or("legacy"),
+    )
+}
+
+fn duplicate_attachment_relative_path(
+  issue_id: &str,
+  block_id: &str,
+  item_id: Option<&str>,
+  source_attachment_id: &str,
+  source_relative_path: &str,
+) -> PathBuf {
+  let file_name = Path::new(source_relative_path)
+    .file_name()
+    .and_then(|value| value.to_str())
+    .map(sanitize_filename)
+    .unwrap_or_else(|| "attachment.bin".to_string());
+  duplicate_attachment_relative_dir(issue_id, block_id, item_id)
+    .join(format!("{source_attachment_id}-{file_name}"))
+}
+
+fn copy_storage_file(
+  storage_dir: &Path,
+  source_relative_path: &str,
+  target_relative_path: &Path,
+) -> std::result::Result<(), (StatusCode, String)> {
+  let source_absolute = storage_dir.join(source_relative_path);
+  if !source_absolute.exists() {
+    return Err(api_internal(format!(
+      "source file is missing while duplicating attachment: {source_relative_path}"
+    )));
+  }
+
+  let target_absolute = storage_dir.join(target_relative_path);
+  if let Some(parent) = target_absolute.parent() {
+    fs::create_dir_all(parent).map_err(|err| {
+      api_internal(format!(
+        "failed to prepare attachment directory {}: {err}",
+        parent.display()
+      ))
+    })?;
+  }
+
+  fs::copy(&source_absolute, &target_absolute).map_err(|err| {
+    api_internal(format!(
+      "failed to copy {} to {}: {err}",
+      source_absolute.display(),
+      target_absolute.display()
+    ))
+  })?;
+
+  Ok(())
 }
 
 fn app_shell(view: &str, issue_id: Option<&str>, print_mode: bool) -> Html<String> {
@@ -1787,6 +1879,420 @@ async fn api_issue_save(
   Ok(Json(document))
 }
 
+async fn duplicate_issue_children(
+  state: &Arc<AppState>,
+  source_issue_id: &str,
+  duplicated_issue_id: &str,
+) -> std::result::Result<(), (StatusCode, String)> {
+  let block_rows = state
+    .client
+    .query(
+      "select
+         id::text,
+         block_kind,
+         heading,
+         body,
+         audience_label,
+         to_char(due_date, 'YYYY-MM-DD'),
+         note,
+         sort_order
+       from blocks
+       where issue_id::text = $1
+       order by sort_order asc, created_at asc",
+      &[&source_issue_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  let item_rows = state
+    .client
+    .query(
+      "select
+         id::text,
+         block_id::text,
+         heading,
+         body,
+         audience_label,
+         to_char(due_date, 'YYYY-MM-DD'),
+         note,
+         sort_order
+       from block_items
+       where block_id in (
+         select id
+         from blocks
+         where issue_id::text = $1
+       )
+       order by sort_order asc, created_at asc",
+      &[&source_issue_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  let attachment_rows = state
+    .client
+    .query(
+      "select
+         id::text,
+         block_id::text,
+         item_id::text,
+         sort_order,
+         original_filename,
+         mime_type,
+         original_path,
+         thumbnail_path,
+         page_count,
+         width,
+         height
+       from attachments
+       where issue_id::text = $1
+       order by sort_order asc, created_at asc",
+      &[&source_issue_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  let mut duplicated_block_ids = BTreeMap::<String, String>::new();
+  for row in block_rows {
+    let source_block_id = row.get::<_, String>(0);
+    let duplicated_block_row = state
+      .client
+      .query_one(
+        "insert into blocks (
+           issue_id,
+           sort_order,
+           block_kind,
+           heading,
+           body,
+           audience_label,
+           due_date,
+           note
+         )
+         values (
+           (select id from issues where id::text = $1),
+           $2,
+           $3,
+           $4,
+           $5,
+           $6,
+           nullif($7, '')::date,
+           $8
+         )
+         returning id::text",
+        &[
+          &duplicated_issue_id,
+          &row.get::<_, i32>(7),
+          &row.get::<_, String>(1),
+          &row.get::<_, String>(2),
+          &row.get::<_, String>(3),
+          &row.get::<_, String>(4),
+          &row.get::<_, Option<String>>(5).unwrap_or_default(),
+          &row.get::<_, String>(6),
+        ],
+      )
+      .await
+      .map_err(|err| api_internal(err.to_string()))?;
+    duplicated_block_ids.insert(source_block_id, duplicated_block_row.get::<_, String>(0));
+  }
+
+  let mut duplicated_item_ids = BTreeMap::<String, String>::new();
+  for row in item_rows {
+    let source_item_id = row.get::<_, String>(0);
+    let source_block_id = row.get::<_, String>(1);
+    let duplicated_block_id = duplicated_block_ids
+      .get(&source_block_id)
+      .cloned()
+      .ok_or_else(|| api_internal("missing duplicated block while duplicating items"))?;
+
+    let duplicated_item_row = state
+      .client
+      .query_one(
+        "insert into block_items (
+           block_id,
+           sort_order,
+           heading,
+           body,
+           audience_label,
+           due_date,
+           note
+         )
+         values (
+           (select id from blocks where id::text = $1),
+           $2,
+           $3,
+           $4,
+           $5,
+           nullif($6, '')::date,
+           $7
+         )
+         returning id::text",
+        &[
+          &duplicated_block_id,
+          &row.get::<_, i32>(7),
+          &row.get::<_, String>(2),
+          &row.get::<_, String>(3),
+          &row.get::<_, String>(4),
+          &row.get::<_, Option<String>>(5).unwrap_or_default(),
+          &row.get::<_, String>(6),
+        ],
+      )
+      .await
+      .map_err(|err| api_internal(err.to_string()))?;
+    duplicated_item_ids.insert(source_item_id, duplicated_item_row.get::<_, String>(0));
+  }
+
+  for row in attachment_rows {
+    let source_attachment_id = row.get::<_, String>(0);
+    let source_block_id = row.get::<_, String>(1);
+    let source_item_id = row.get::<_, Option<String>>(2);
+    let sort_order = row.get::<_, i32>(3);
+    let original_filename = row.get::<_, String>(4);
+    let mime_type = row.get::<_, String>(5);
+    let original_path = row.get::<_, String>(6);
+    let thumbnail_path = row.get::<_, String>(7);
+    let page_count = row.get::<_, Option<i32>>(8);
+    let width = row.get::<_, Option<i32>>(9);
+    let height = row.get::<_, Option<i32>>(10);
+
+    let duplicated_block_id = duplicated_block_ids
+      .get(&source_block_id)
+      .cloned()
+      .ok_or_else(|| api_internal("missing duplicated block while duplicating attachments"))?;
+    let duplicated_item_id = source_item_id
+      .as_ref()
+      .map(|value| {
+        duplicated_item_ids
+          .get(value)
+          .cloned()
+          .ok_or_else(|| api_internal("missing duplicated item while duplicating attachments"))
+      })
+      .transpose()?;
+
+    let duplicated_original_relative = duplicate_attachment_relative_path(
+      duplicated_issue_id,
+      &duplicated_block_id,
+      duplicated_item_id.as_deref(),
+      &source_attachment_id,
+      &original_path,
+    );
+    copy_storage_file(
+      &state.storage_dir,
+      &original_path,
+      &duplicated_original_relative,
+    )?;
+
+    let source_thumbnail_absolute = state.storage_dir.join(&thumbnail_path);
+    let duplicated_thumbnail_relative = if thumbnail_path.is_empty()
+      || thumbnail_path == original_path
+      || !source_thumbnail_absolute.exists()
+    {
+      duplicated_original_relative.clone()
+    } else {
+      let duplicated_thumbnail_relative = duplicate_attachment_relative_path(
+        duplicated_issue_id,
+        &duplicated_block_id,
+        duplicated_item_id.as_deref(),
+        &format!("{source_attachment_id}-thumb"),
+        &thumbnail_path,
+      );
+      copy_storage_file(
+        &state.storage_dir,
+        &thumbnail_path,
+        &duplicated_thumbnail_relative,
+      )?;
+      duplicated_thumbnail_relative
+    };
+
+    let duplicated_original_text = duplicated_original_relative.to_string_lossy().to_string();
+    let duplicated_thumbnail_text = duplicated_thumbnail_relative.to_string_lossy().to_string();
+
+    state
+      .client
+      .execute(
+        "insert into attachments (
+           issue_id,
+           block_id,
+           item_id,
+           sort_order,
+           original_filename,
+           mime_type,
+           original_path,
+           thumbnail_path,
+           page_count,
+           width,
+           height
+         )
+         values (
+           (select id from issues where id::text = $1),
+           (select id from blocks where id::text = $2),
+           (select id from block_items where id::text = $3),
+           $4,
+           $5,
+           $6,
+           $7,
+           $8,
+           $9,
+           $10,
+           $11
+         )",
+        &[
+          &duplicated_issue_id,
+          &duplicated_block_id,
+          &duplicated_item_id,
+          &sort_order,
+          &original_filename,
+          &mime_type,
+          &duplicated_original_text,
+          &duplicated_thumbnail_text,
+          &page_count,
+          &width,
+          &height,
+        ],
+      )
+      .await
+      .map_err(|err| api_internal(err.to_string()))?;
+  }
+
+  Ok(())
+}
+
+async fn api_issue_delete(
+  State(state): State<Arc<AppState>>,
+  RoutePath(issue_id): RoutePath<String>,
+) -> ApiResult<DeleteIssueResponse> {
+  let status_row = state
+    .client
+    .query_opt(
+      "select status from issues where id::text = $1",
+      &[&issue_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  let Some(status_row) = status_row else {
+    return Err(api_not_found("issue not found"));
+  };
+
+  let status = status_row.get::<_, String>(0);
+  if status == "published" {
+    return Err(api_conflict("公開済みの案内は削除できません"));
+  }
+
+  state
+    .client
+    .execute("delete from issues where id::text = $1", &[&issue_id])
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  remove_issue_storage_artifacts(&state.storage_dir, &issue_id);
+
+  Ok(Json(DeleteIssueResponse { id: issue_id }))
+}
+
+async fn api_issue_duplicate(
+  State(state): State<Arc<AppState>>,
+  RoutePath(issue_id): RoutePath<String>,
+) -> ApiResult<DuplicateIssueResponse> {
+  let source_issue_row = state
+    .client
+    .query_opt(
+      "select
+         issue_type,
+         title,
+         to_char(issue_month, 'YYYY-MM-DD'),
+         to_char(meeting_date, 'YYYY-MM-DD'),
+         to_char(meeting_time, 'HH24:MI'),
+         place,
+         header_note,
+         footer_note,
+         correction_of_issue_id::text
+       from issues
+       where id::text = $1",
+      &[&issue_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .ok_or_else(|| api_not_found("issue not found"))?;
+
+  let issue_type = source_issue_row.get::<_, String>(0);
+  let source_title = source_issue_row.get::<_, String>(1);
+  let issue_month = source_issue_row
+    .get::<_, Option<String>>(2)
+    .unwrap_or_default();
+  let meeting_date = source_issue_row
+    .get::<_, Option<String>>(3)
+    .unwrap_or_default();
+  let meeting_time = source_issue_row
+    .get::<_, Option<String>>(4)
+    .unwrap_or_default();
+  let place = source_issue_row.get::<_, String>(5);
+  let header_note = source_issue_row.get::<_, String>(6);
+  let footer_note = source_issue_row.get::<_, String>(7);
+  let correction_of_issue_id = source_issue_row.get::<_, Option<String>>(8);
+  let duplicated_title = duplicate_issue_title(&source_title);
+
+  let duplicated_issue_row = state
+    .client
+    .query_one(
+      "insert into issues (
+         issue_type,
+         status,
+         title,
+         issue_month,
+         meeting_date,
+         meeting_time,
+         place,
+         header_note,
+         footer_note,
+         correction_of_issue_id,
+         published_at
+       )
+       values (
+         $1,
+         'draft',
+         $2,
+         nullif($3, '')::date,
+         nullif($4, '')::date,
+         nullif($5, '')::time,
+         $6,
+         $7,
+         $8,
+         nullif($9, '')::uuid,
+         null
+       )
+       returning id::text",
+      &[
+        &issue_type,
+        &duplicated_title,
+        &issue_month,
+        &meeting_date,
+        &meeting_time,
+        &place,
+        &header_note,
+        &footer_note,
+        &correction_of_issue_id.unwrap_or_default(),
+      ],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+  let duplicated_issue_id = duplicated_issue_row.get::<_, String>(0);
+
+  if let Err(err) = duplicate_issue_children(&state, &issue_id, &duplicated_issue_id).await {
+    let _ = state
+      .client
+      .execute(
+        "delete from issues where id::text = $1",
+        &[&duplicated_issue_id],
+      )
+      .await;
+    remove_issue_storage_artifacts(&state.storage_dir, &duplicated_issue_id);
+    return Err(err);
+  }
+
+  Ok(Json(DuplicateIssueResponse {
+    id: duplicated_issue_id,
+  }))
+}
+
 async fn ensure_first_item_for_block(
   state: &Arc<AppState>,
   block_id: &str,
@@ -2169,8 +2675,11 @@ async fn run_web(args: WebArgs) -> Result<()> {
     .route("/api/issues", get(api_issues).post(api_create_issue))
     .route(
       "/api/issues/{id}",
-      get(api_issue_detail).put(api_issue_save),
+      get(api_issue_detail)
+        .put(api_issue_save)
+        .delete(api_issue_delete),
     )
+    .route("/api/issues/{id}/duplicate", post(api_issue_duplicate))
     .route(
       "/api/blocks/{id}/attachments",
       axum::routing::post(api_block_attachment_upload),

@@ -169,3 +169,24 @@
 - 2026-03-15 19:11:37 +0900 [調査] 依頼に基づき現状差分のコミット整理を開始。`build-error.txt` と `test-error.txt` が成功状態であることを確認し、`git status --short` で `src/main.rs`・`web-src/*`・`gwc.sh` の未コミット差分を把握した。
 - 2026-03-15 19:14:45 +0900 [修正] 新規 `gwc.sh` は `#!env zsh` のため直接実行で壊れる状態だった。`#!/usr/bin/env zsh` へ修正し、引数展開も `"$@"` に直して補助スクリプトとして成立させた。
 - 2026-03-15 19:15:34 +0900 [判断] `notice-pdf.js` の紙面修正と文字倍率機能は同じ組版経路に重なっており、`WORK_TIMELINE.md` も含めて無理に分割すると履歴が不自然になるため、今回は紙面調整・添付上限緩和・補助スクリプト修正を1コミットでまとめる方針にした。
+- 2026-03-18 20:02:48 +0900 [requirements] 既存案内一覧の編集ボタン横に削除・複製を追加したい要望について、要件定義のため現状確認を開始。
+- 2026-03-18 20:03:00 +0900 [inspection] build-error.txt と test-error.txt を確認し、現時点で失敗なしを確認。案内一覧UIとAPI経路の調査に着手。
+- 2026-03-18 20:03:10 +0900 [inspection] 一覧の編集リンク描画箇所と issue CRUD API 実装の読解を開始。削除・複製の受け皿有無を確認中。
+- 2026-03-18 20:03:26 +0900 [inspection] issue の削除・複製を要件化するため、DB制約とフロントの一覧/作成処理の確認を開始。
+- 2026-03-18 20:04:59 +0900 [finding] 既存案内一覧は現状  のみ表示。issue 単位の削除API・複製APIは未実装で、複製仕様では添付原本の扱いが最大論点と判断。
+- 2026-03-18 20:05:09 +0900 [finding] 既存案内一覧は現状 編集リンクのみ表示。issue 単位の削除API・複製APIは未実装で、複製仕様では添付原本の扱いが最大論点と判断。
+- 2026-03-18 20:08:44 +0900 [requirements] ユーザー回答を反映。ボタン表示は全件、削除は draft のみ物理削除で published は不可、複製は案内・block・item・添付資料まで含む深い複製の方向で要件整理を継続。
+- 2026-03-18 20:09:04 +0900 [inspection] 添付複製の仕様確認のため、保存パスと削除処理の実装を確認開始。共有参照だと削除で破綻するため要件化が必要。
+- 2026-03-18 20:10:57 +0900 [requirements] 複製後は新しい案内の編集画面へ遷移、タイトルは末尾に（複製）を付与する方針で要件確定。追加質問なしで Go 待ちへ移行。
+- 2026-03-18 20:11:56 +0900 [start] Go を受けて実装開始。一覧UI、issue API、添付複製処理の関連箇所を再確認する。
+- 2026-03-18 20:14:21 +0900 [plan] API に issue 削除・複製を追加し、一覧UIに対応ボタンとハンドラを実装する方針を確定。複製は添付実ファイルも別保存する。
+- 2026-03-18 20:18:07 +0900 [edit] src/main.rs に issue 削除・複製向けのレスポンス型、タイトル複製、添付パス生成、ファイル複製、削除後片付けヘルパを追加。
+- 2026-03-18 20:19:31 +0900 [edit] src/main.rs に issue の削除API、複製API、block/item/attachment の深い複製処理、失敗時の cleanup、ルート登録を追加。
+- 2026-03-18 20:20:20 +0900 [edit] web-src/main.js に一覧カードの複製・削除ボタンとハンドラを追加し、web-src/app.css に操作列レイアウトを追加。
+- 2026-03-18 20:21:02 +0900 [format] cargo fmt を実行して Rust 差分を整形。
+- 2026-03-18 20:21:32 +0900 [build] npm run build を実行し web-dist を更新。Vite の chunk size 警告は継続するが build 自体は成功。
+- 2026-03-18 20:30:46 +0900 [codified-context] codified-context-maintenance implementation-followup を開始。差分監査、既存 context の照合、必要更新の提案作成に着手。
+- 2026-03-18 20:31:01 +0900 [codified-context] AGENTS.md と context/repo-map.md、および変更ファイルに対する routing audit を開始。
+- 2026-03-18 20:31:41 +0900 [codified-context] 提案確定。新規 asset は作らず、AGENTS.md と context/repo-map.md の追記修正で実装追従を反映する。
+- 2026-03-18 20:32:32 +0900 [codified-context] AGENTS.md と context/repo-map.md を更新し、一覧の削除/複製導線、draft 限定削除、添付の深い複製を codified context に反映。
+- 2026-03-18 20:33:03 +0900 [git] 実装差分と codified context 更新をコミット予定。commit message は Add issue duplicate and delete actions。
