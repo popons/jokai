@@ -377,14 +377,12 @@ let fontPromise = null;
 
 async function loadFonts() {
   if (!fontPromise) {
-    fontPromise = Promise.all([
-      fetch("/assets/fonts/body.ttf").then((response) => response.arrayBuffer()),
-      fetch("/assets/fonts/body-bold.ttf").then((response) => response.arrayBuffer()),
-      fetch("/assets/fonts/title.ttf").then((response) => response.arrayBuffer()),
-    ]).then(([body, bodyBold, title]) => ({
-      [BODY_FONT_NAME]: { data: body, fallback: true },
-      [BODY_BOLD_FONT_NAME]: { data: bodyBold },
-      [TITLE_FONT_NAME]: { data: title },
+    fontPromise = fetch("/assets/fonts/body.ttf")
+      .then((response) => response.arrayBuffer())
+      .then((paperFont) => ({
+        [BODY_FONT_NAME]: { data: paperFont, fallback: true },
+        [BODY_BOLD_FONT_NAME]: { data: paperFont },
+        [TITLE_FONT_NAME]: { data: paperFont },
     }));
   }
 

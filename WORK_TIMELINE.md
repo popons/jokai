@@ -212,3 +212,20 @@
 - 2026-03-18 22:39:57 +0900 [検証] `npm ci` で依存導入後、`npm run build` は成功。今回の `vite: not found` は `watch-run-server.sh` の不具合ではなく、作業ツリー未セットアップが原因と確定。
 - 2026-03-18 22:42:11 +0900 [codified-context] debug-followup として監査。今回の知見は repo-wide な起動手順不足なので、新規文書は増やさず `AGENTS.md` と `context/repo-map.md` の既存ルーティングへ最小追記する方針に決定。
 - 2026-03-18 22:42:50 +0900 [codified-context] `AGENTS.md` の既知コマンドと `context/repo-map.md` の Verification Notes に `npm ci` 前提を追記。保存後 1 秒待機のうえ `build-error.txt` / `test-error.txt` / `clippy-error.txt` を確認し、新規失敗なしと判断。
+- 2026-03-18 22:47:06 +0900 [調査開始] `build-error.txt` `test-error.txt` `clippy-error.txt` を確認し、ビルド/テスト失敗ではなく実行時の 404/500 調査に着手。`deep-understand` と `context/repo-map.md` も読了。
+- 2026-03-18 22:48:49 +0900 [原因切り分け] `curl` と DB 確認で `/api/attachments/*` 500 は `data/` 空による実ファイル欠損、`/assets/fonts/body*.ttf` 404 は `/mnt/c/Windows/Fonts/YuGothic-Bold.ttf` 不在が原因と特定。`jokai-pdfme-layout` も読んで紙面系依存を確認。
+- 2026-03-18 22:50:05 +0900 [補足確認] `build-error-win.txt` は未生成で、現行の問題は Windows 向けビルド失敗ではなく、ローカル storage 未同期と host 依存フォント解決の組み合わせだと再確認。
+- 2026-03-18 22:51:46 +0900 [再生成可否整理] `src/main.rs` の storage 利用箇所を確認し、`data/preview-renders` は毎回生成・即削除される一時物、`data/generated` は legacy 残骸、`data/issues/.../attachments` は DB にメタデータしか無いため原本欠損時は再生成不能と整理。
+- 2026-03-18 22:59:37 +0900 [要件定義] 単一バイナリ化の要件ヒアリングに切替。現状の外部依存が `web-dist`、OS フォント、`pdftoppm`、PostgreSQL、storage dir に分かれていることを確認し、どこまでを単一バイナリ範囲へ含めるか整理開始。
+- 2026-03-18 23:04:11 +0900 [要件定義] DB/生成物境界を確認。発行物の本文ソースは `issues` `blocks` `block_items` にあり、添付原本は `attachments.original_path` / `thumbnail_path` 経由で filesystem 保持、`generated_files` は legacy PDF path 記録のみで実体欠損もあり、現行 `issues` は全件 `draft` だった。
+- 2026-03-18 23:04:11 +0900 [要件定義] 単一バイナリ方針として、添付原本/サムネは DB 保持、PDF は保存せず都度生成、`web-dist` とフォントはバイナリ埋め込み、既存データは破棄寄り、添付バイナリは原本/サムネ分離テーブル案で整理。
+- 2026-03-18 23:12:32 +0900 [要件定義] 要件はほぼ確定。残論点は同梱フォントの出所のみで、現在ホスト依存の `YuGothic-Bold.ttf` は再利用しづらいため、配布可能フォントを seed/static asset として埋め込む前提確認へ移行。
+- 2026-03-18 23:12:32 +0900 [要件定義] フォントは配布可能なものへ切替方向。ただし Web フォント許容は `published` の見た目再現性と衝突するため、紙面/PDF 用は同梱固定、必要なら editor chrome のみ別扱いが筋だと整理。
+- 2026-03-18 23:12:32 +0900 [実装] `db/003_embedded_assets_and_attachment_blobs.sql` を追加し、添付DB blob/thumbnail cache と publish version 列の土台を追加。`Cargo.toml` と `build.rs` も埋め込み asset 向けに更新。
+- 2026-03-18 23:12:32 +0900 [実装] `src/main.rs` を埋め込み asset/font 配信、添付DB保存、legacy storage backfill、issue save 時の `source_version` 更新に対応させた。`web-src/notice-pdf.js` は紙面フォント取得を1本化し、`AGENTS.md` と `context/repo-map.md` も新境界へ更新。
+- 2026-03-18 23:26:04 +0900 [検証] `npm run build` と `cargo fmt` 実施後、監視の `build-error.txt` / `test-error.txt` / `clippy-error.txt` は正常。`/assets/fonts/body.ttf` は 200 化、新規 draft issue で添付 upload -> `/content` `/thumbnail` とも 200、DB 上も原本/サムネ cache 保存後に draft 削除で残骸なしを確認。
+- 2026-03-18 23:34:32 +0900 [原因特定] 旧添付 500 継続の主因はコード不備ではなく、`data/` が空のままで `data.zip` 未展開だったこと。`data.zip` 内には対象 issue `e773...` と該当 3 添付の原本実体が存在することを確認。
+- 2026-03-18 23:35:07 +0900 [ブロッカー] `data.zip` は実体ファイルが暗号化されており、`unzip` / `7z x` とも `Wrong password` で展開不能。対象 issue の原本3件も同様に未復元で、旧添付 500 解消は復号手段なしでは進められない。
+- 2026-03-18 23:37:21 +0900 [再起動確認] 指示どおり `./watch-run-server.sh` を再起動。新コードで `/assets/fonts/body.ttf` は 200、対象添付は 0 バイト誤判定を除去した結果 500 に戻り、残る実ブロッカーが暗号化 `data.zip` だけであることを確認。
+- 2026-03-18 23:41:33 +0900 [復旧完了] 復号済み `data/` 配置後に再度 `./watch-run-server.sh` を再起動。対象 issue `e773...` の 3 添付は `/content` `/thumbnail` とも 200 に復帰し、DB `attachment_original_contents` にも実バイト長で backfill されたことを確認。監視ログも正常。
+- 2026-03-19 00:03:13 +0900 [codified-context] `codified-context-maintenance` で routing 監査を実施し、`AGENTS.md` に紙面フォント導線と `bundled-assets/fonts/README.md` の Context Routing を追記。`context/repo-map.md` には `source_version` / `published_*_version` と起動時 legacy backfill を追記。

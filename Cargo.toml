@@ -11,6 +11,7 @@ base64 = "0.22.1"
 clap = { version = "4.5.38", features = ["derive", "env"] }
 color-eyre = "0.6.5"
 chrono = "0.4.40"
+include_dir = "0.7.4"
 serde = { version = "1.0.219", features = ["derive"] }
 tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread", "signal"] }
 tokio-postgres = "0.7.13"

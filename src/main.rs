@@ -11,6 +11,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{DateTime, Local, Utc};
 use clap::{ArgAction, Args, Parser, Subcommand, ValueHint};
 use color_eyre::eyre::{Context, Result, bail, eyre};
+use include_dir::{Dir, include_dir};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -43,12 +44,19 @@ const DEFAULT_BIND: &str = "0.0.0.0:12040";
 const DEFAULT_STORAGE_DIR: &str = "data";
 const DEFAULT_MEETING_PLACE: &str = "平古場自治公民館";
 const MIGRATION_TABLE: &str = "app_schema_migrations";
-const FRONTEND_DIST_DIR: &str = "web-dist";
 const FRONTEND_APP_CSS: &str = "app.css";
 const FRONTEND_APP_JS: &str = "app.js";
 const FRONTEND_FONT_BODY: &str = "body.ttf";
 const FRONTEND_FONT_BODY_BOLD: &str = "body-bold.ttf";
 const FRONTEND_FONT_TITLE: &str = "title.ttf";
+const CURRENT_LAYOUT_VERSION: &str = "notice-pdf-layout-v2";
+const CURRENT_FONT_VERSION: &str = "noto-sans-jp-v1";
+const CURRENT_RENDERER_VERSION: &str = "pdfme-raster-v2";
+static EMBEDDED_FRONTEND_DIST: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/web-dist");
+static EMBEDDED_PAPER_FONT_BYTES: &[u8] = include_bytes!(concat!(
+  env!("CARGO_MANIFEST_DIR"),
+  "/bundled-assets/fonts/NotoSansJP-VF.ttf"
+));
 
 /* trait  ************************************************************************************************/
 
@@ -212,6 +220,13 @@ struct IssueDocumentAttachment {
   content_url: String,
 }
 
+#[derive(Debug)]
+struct AttachmentStorageMetadata {
+  mime_type: String,
+  legacy_original_path: String,
+  legacy_thumbnail_path: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateIssuePayload {
   issue_type: String,
@@ -336,14 +351,6 @@ fn manifest_db_dir() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).join("db")
 }
 
-fn manifest_frontend_dist_dir() -> PathBuf {
-  Path::new(env!("CARGO_MANIFEST_DIR")).join(FRONTEND_DIST_DIR)
-}
-
-fn frontend_asset_path(file_name: &str) -> PathBuf {
-  manifest_frontend_dist_dir().join(file_name)
-}
-
 fn asset_content_type(path: &Path) -> &'static str {
   match path
     .extension()
@@ -362,20 +369,20 @@ fn asset_content_type(path: &Path) -> &'static str {
   }
 }
 
-fn bundled_font_path(file_name: &str) -> Result<PathBuf> {
-  let candidate = match file_name {
-    FRONTEND_FONT_BODY => Some(PathBuf::from("/mnt/c/Windows/Fonts/YuGothic-Bold.ttf")),
-    FRONTEND_FONT_BODY_BOLD => Some(PathBuf::from("/mnt/c/Windows/Fonts/YuGothic-Bold.ttf")),
-    FRONTEND_FONT_TITLE => Some(PathBuf::from("/mnt/c/Windows/Fonts/yumin.ttf")),
-    _ => None,
-  }
-  .ok_or_else(|| eyre!("unknown frontend font `{file_name}`"))?;
+fn embedded_frontend_file(path: &str) -> Option<&'static include_dir::File<'static>> {
+  EMBEDDED_FRONTEND_DIST.get_file(path).or_else(|| {
+    let nested = format!("assets/{path}");
+    EMBEDDED_FRONTEND_DIST.get_file(&nested)
+  })
+}
 
-  if candidate.exists() {
-    return Ok(candidate);
+fn bundled_font_bytes(file_name: &str) -> Result<&'static [u8]> {
+  match file_name {
+    FRONTEND_FONT_BODY | FRONTEND_FONT_BODY_BOLD | FRONTEND_FONT_TITLE => {
+      Ok(EMBEDDED_PAPER_FONT_BYTES)
+    }
+    _ => bail!("unknown frontend font `{file_name}`"),
   }
-
-  bail!("font asset `{file_name}` is unavailable on this host")
 }
 
 fn ensure_storage_dirs(storage_dir: &Path) -> Result<()> {
@@ -554,71 +561,6 @@ fn remove_issue_storage_artifacts(storage_dir: &Path, issue_id: &str) {
   let _ = fs::remove_dir_all(issue_generated_dir(storage_dir, issue_id));
 }
 
-fn duplicate_attachment_relative_dir(
-  issue_id: &str,
-  block_id: &str,
-  item_id: Option<&str>,
-) -> PathBuf {
-  PathBuf::from("issues")
-    .join(issue_id)
-    .join("attachments")
-    .join(block_id)
-    .join(
-      item_id
-        .filter(|value| !value.is_empty())
-        .unwrap_or("legacy"),
-    )
-}
-
-fn duplicate_attachment_relative_path(
-  issue_id: &str,
-  block_id: &str,
-  item_id: Option<&str>,
-  source_attachment_id: &str,
-  source_relative_path: &str,
-) -> PathBuf {
-  let file_name = Path::new(source_relative_path)
-    .file_name()
-    .and_then(|value| value.to_str())
-    .map(sanitize_filename)
-    .unwrap_or_else(|| "attachment.bin".to_string());
-  duplicate_attachment_relative_dir(issue_id, block_id, item_id)
-    .join(format!("{source_attachment_id}-{file_name}"))
-}
-
-fn copy_storage_file(
-  storage_dir: &Path,
-  source_relative_path: &str,
-  target_relative_path: &Path,
-) -> std::result::Result<(), (StatusCode, String)> {
-  let source_absolute = storage_dir.join(source_relative_path);
-  if !source_absolute.exists() {
-    return Err(api_internal(format!(
-      "source file is missing while duplicating attachment: {source_relative_path}"
-    )));
-  }
-
-  let target_absolute = storage_dir.join(target_relative_path);
-  if let Some(parent) = target_absolute.parent() {
-    fs::create_dir_all(parent).map_err(|err| {
-      api_internal(format!(
-        "failed to prepare attachment directory {}: {err}",
-        parent.display()
-      ))
-    })?;
-  }
-
-  fs::copy(&source_absolute, &target_absolute).map_err(|err| {
-    api_internal(format!(
-      "failed to copy {} to {}: {err}",
-      source_absolute.display(),
-      target_absolute.display()
-    ))
-  })?;
-
-  Ok(())
-}
-
 fn app_shell(view: &str, issue_id: Option<&str>, print_mode: bool) -> Html<String> {
   let issue_id_attr = issue_id.unwrap_or("");
   let page_title = match view {
@@ -716,6 +658,314 @@ fn windows_temp_dir() -> Option<PathBuf> {
   }
 
   None
+}
+
+async fn fetch_attachment_storage_metadata(
+  client: &Client,
+  attachment_id: &str,
+) -> std::result::Result<Option<AttachmentStorageMetadata>, tokio_postgres::Error> {
+  let row = client
+    .query_opt(
+      "select
+         mime_type,
+         coalesce(legacy_original_path, ''),
+         coalesce(legacy_thumbnail_path, '')
+       from attachments
+       where id::text = $1",
+      &[&attachment_id],
+    )
+    .await?;
+
+  Ok(row.map(|row| AttachmentStorageMetadata {
+    mime_type: row.get::<_, String>(0),
+    legacy_original_path: row.get::<_, String>(1),
+    legacy_thumbnail_path: row.get::<_, String>(2),
+  }))
+}
+
+fn read_legacy_attachment_file(
+  storage_dir: &Path,
+  relative_path: &str,
+) -> std::result::Result<Option<Vec<u8>>, (StatusCode, String)> {
+  let trimmed = relative_path.trim();
+  if trimmed.is_empty() {
+    return Ok(None);
+  }
+
+  let absolute_path = storage_dir.join(trimmed);
+  if !absolute_path.exists() {
+    return Ok(None);
+  }
+
+  let bytes = fs::read(&absolute_path)
+    .map_err(|err| api_internal(format!("failed to read {}: {err}", absolute_path.display())))?;
+  if bytes.is_empty() {
+    return Ok(None);
+  }
+  Ok(Some(bytes))
+}
+
+async fn upsert_attachment_original_content(
+  client: &Client,
+  attachment_id: &str,
+  bytes: &[u8],
+) -> std::result::Result<(), (StatusCode, String)> {
+  client
+    .execute(
+      "insert into attachment_original_contents (attachment_id, content)
+       values ((select id from attachments where id::text = $1), $2)
+       on conflict (attachment_id)
+       do update set content = excluded.content, updated_at = now()",
+      &[&attachment_id, &bytes],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+  Ok(())
+}
+
+async fn upsert_attachment_thumbnail_cache(
+  client: &Client,
+  attachment_id: &str,
+  mime_type: &str,
+  bytes: &[u8],
+) -> std::result::Result<(), (StatusCode, String)> {
+  client
+    .execute(
+      "insert into attachment_thumbnail_caches (attachment_id, mime_type, content)
+       values ((select id from attachments where id::text = $1), $2, $3)
+       on conflict (attachment_id)
+       do update set mime_type = excluded.mime_type, content = excluded.content, updated_at = now()",
+      &[&attachment_id, &mime_type, &bytes],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+  Ok(())
+}
+
+async fn fetch_attachment_original_bytes(
+  state: &AppState,
+  attachment_id: &str,
+) -> std::result::Result<(String, Vec<u8>), (StatusCode, String)> {
+  let metadata = fetch_attachment_storage_metadata(&state.client, attachment_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .ok_or_else(|| api_not_found("attachment not found"))?;
+
+  let stored = state
+    .client
+    .query_opt(
+      "select content
+       from attachment_original_contents
+       where attachment_id = (select id from attachments where id::text = $1)",
+      &[&attachment_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  if let Some(row) = stored {
+    let bytes = row.get::<_, Vec<u8>>(0);
+    if !bytes.is_empty() {
+      return Ok((metadata.mime_type, bytes));
+    }
+  }
+
+  let Some(bytes) =
+    read_legacy_attachment_file(&state.storage_dir, &metadata.legacy_original_path)?
+  else {
+    return Err(api_internal(
+      "attachment original is missing from database and legacy storage",
+    ));
+  };
+
+  upsert_attachment_original_content(&state.client, attachment_id, &bytes).await?;
+  Ok((metadata.mime_type, bytes))
+}
+
+async fn fetch_attachment_thumbnail_cache(
+  state: &AppState,
+  attachment_id: &str,
+) -> std::result::Result<Option<(String, Vec<u8>)>, (StatusCode, String)> {
+  let row = state
+    .client
+    .query_opt(
+      "select mime_type, content
+       from attachment_thumbnail_caches
+       where attachment_id = (select id from attachments where id::text = $1)",
+      &[&attachment_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  Ok(row.map(|row| (row.get::<_, String>(0), row.get::<_, Vec<u8>>(1))))
+}
+
+fn legacy_thumbnail_mime_type(metadata: &AttachmentStorageMetadata) -> String {
+  if attachment_display_kind(&metadata.mime_type) == "pdf" {
+    "image/png".to_string()
+  } else {
+    metadata.mime_type.clone()
+  }
+}
+
+fn render_pdf_thumbnail_png(
+  state: &AppState,
+  attachment_id: &str,
+  pdf_bytes: &[u8],
+) -> std::result::Result<Vec<u8>, (StatusCode, String)> {
+  let Some(pdftoppm_cmd) = &state.pdftoppm_cmd else {
+    return Err(api_internal(
+      "pdftoppm is required to build PDF thumbnails but was not found",
+    ));
+  };
+
+  let job_dir = preview_render_root(&state.storage_dir).join(format!("{attachment_id}-thumb"));
+  let _ = fs::remove_dir_all(&job_dir);
+  fs::create_dir_all(&job_dir).map_err(|err| api_internal(err.to_string()))?;
+
+  let input_pdf = job_dir.join("input.pdf");
+  let output_prefix = job_dir.join("thumb");
+  let output_png = job_dir.join("thumb.png");
+  fs::write(&input_pdf, pdf_bytes).map_err(|err| api_internal(err.to_string()))?;
+
+  let status = ProcessCommand::new(pdftoppm_cmd)
+    .arg("-png")
+    .arg("-singlefile")
+    .arg("-f")
+    .arg("1")
+    .arg("-scale-to")
+    .arg("220")
+    .arg(&input_pdf)
+    .arg(&output_prefix)
+    .status()
+    .map_err(|err| api_internal(format!("failed to launch pdftoppm: {err}")))?;
+
+  if !status.success() {
+    let _ = fs::remove_dir_all(&job_dir);
+    return Err(api_internal("pdftoppm failed while generating thumbnail"));
+  }
+
+  let png_bytes = fs::read(&output_png).map_err(|err| {
+    api_internal(format!(
+      "failed to read generated thumbnail {}: {err}",
+      output_png.display()
+    ))
+  })?;
+  let _ = fs::remove_dir_all(&job_dir);
+  Ok(png_bytes)
+}
+
+async fn fetch_attachment_thumbnail_bytes(
+  state: &AppState,
+  attachment_id: &str,
+) -> std::result::Result<(String, Vec<u8>), (StatusCode, String)> {
+  let metadata = fetch_attachment_storage_metadata(&state.client, attachment_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .ok_or_else(|| api_not_found("attachment not found"))?;
+
+  if let Some((mime_type, bytes)) = fetch_attachment_thumbnail_cache(state, attachment_id).await? {
+    if !bytes.is_empty() {
+      return Ok((mime_type, bytes));
+    }
+  }
+
+  if let Some(bytes) =
+    read_legacy_attachment_file(&state.storage_dir, &metadata.legacy_thumbnail_path)?
+  {
+    let mime_type = legacy_thumbnail_mime_type(&metadata);
+    upsert_attachment_thumbnail_cache(&state.client, attachment_id, &mime_type, &bytes).await?;
+    return Ok((mime_type, bytes));
+  }
+
+  if attachment_display_kind(&metadata.mime_type) != "pdf" {
+    let (mime_type, bytes) = fetch_attachment_original_bytes(state, attachment_id).await?;
+    upsert_attachment_thumbnail_cache(&state.client, attachment_id, &mime_type, &bytes).await?;
+    return Ok((mime_type, bytes));
+  }
+
+  let (_, original_bytes) = fetch_attachment_original_bytes(state, attachment_id).await?;
+  let png_bytes = render_pdf_thumbnail_png(state, attachment_id, &original_bytes)?;
+  upsert_attachment_thumbnail_cache(&state.client, attachment_id, "image/png", &png_bytes).await?;
+  Ok(("image/png".to_string(), png_bytes))
+}
+
+async fn backfill_legacy_attachment_storage(client: &Client, storage_dir: &Path) -> Result<usize> {
+  let rows = client
+    .query(
+      "select
+         a.id::text,
+         a.mime_type,
+         coalesce(a.legacy_original_path, ''),
+         coalesce(a.legacy_thumbnail_path, ''),
+         oc.attachment_id is not null,
+         tc.attachment_id is not null,
+         coalesce(octet_length(oc.content), 0),
+         coalesce(octet_length(tc.content), 0)
+       from attachments a
+       left join attachment_original_contents oc on oc.attachment_id = a.id
+       left join attachment_thumbnail_caches tc on tc.attachment_id = a.id
+       where oc.attachment_id is null
+          or coalesce(octet_length(oc.content), 0) = 0
+          or (
+            (tc.attachment_id is null or coalesce(octet_length(tc.content), 0) = 0)
+            and coalesce(a.legacy_thumbnail_path, '') <> ''
+          )",
+      &[],
+    )
+    .await?;
+
+  let mut migrated_rows = 0usize;
+  for row in rows {
+    let attachment_id = row.get::<_, String>(0);
+    let mime_type = row.get::<_, String>(1);
+    let legacy_original_path = row.get::<_, String>(2);
+    let legacy_thumbnail_path = row.get::<_, String>(3);
+    let has_original = row.get::<_, bool>(4);
+    let has_thumbnail = row.get::<_, bool>(5);
+    let original_len = row.get::<_, i32>(6);
+    let thumbnail_len = row.get::<_, i32>(7);
+
+    if !has_original || original_len == 0 {
+      if let Some(bytes) = read_legacy_attachment_file(storage_dir, &legacy_original_path)
+        .map_err(|err| eyre!(err.1))?
+      {
+        client
+          .execute(
+            "insert into attachment_original_contents (attachment_id, content)
+             values ((select id from attachments where id::text = $1), $2)
+             on conflict (attachment_id)
+             do update set content = excluded.content, updated_at = now()",
+            &[&attachment_id, &bytes],
+          )
+          .await?;
+        migrated_rows += 1;
+      }
+    }
+
+    if !has_thumbnail || thumbnail_len == 0 {
+      if let Some(bytes) = read_legacy_attachment_file(storage_dir, &legacy_thumbnail_path)
+        .map_err(|err| eyre!(err.1))?
+      {
+        let cache_mime = if attachment_display_kind(&mime_type) == "pdf" {
+          "image/png".to_string()
+        } else {
+          mime_type.clone()
+        };
+        client
+          .execute(
+            "insert into attachment_thumbnail_caches (attachment_id, mime_type, content)
+             values ((select id from attachments where id::text = $1), $2, $3)
+             on conflict (attachment_id)
+             do update set mime_type = excluded.mime_type, content = excluded.content, updated_at = now()",
+            &[&attachment_id, &cache_mime, &bytes],
+          )
+          .await?;
+        migrated_rows += 1;
+      }
+    }
+  }
+
+  Ok(migrated_rows)
 }
 
 async fn connect_postgres(url: &str) -> Result<Client> {
@@ -836,77 +1086,8 @@ async fn list_applied_migrations(client: &Client) -> Result<Vec<String>> {
 async fn ensure_attachment_thumbnail(
   state: &AppState,
   attachment_id: &str,
-) -> std::result::Result<(String, String), (StatusCode, String)> {
-  let row = state
-    .client
-    .query_opt(
-      "select mime_type, original_path, thumbnail_path from attachments where id::text = $1",
-      &[&attachment_id],
-    )
-    .await
-    .map_err(|err| api_internal(err.to_string()))?
-    .ok_or_else(|| api_not_found("attachment not found"))?;
-
-  let mime_type = row.get::<_, String>(0);
-  let original_path = row.get::<_, String>(1);
-  let thumbnail_path = row.get::<_, String>(2);
-  let display_kind = attachment_display_kind(&mime_type).to_string();
-
-  if display_kind != "pdf" {
-    return Ok((mime_type, original_path));
-  }
-
-  if !thumbnail_path.is_empty() && thumbnail_path != original_path {
-    let absolute = state.storage_dir.join(&thumbnail_path);
-    if absolute.exists() {
-      return Ok(("image/png".to_string(), thumbnail_path));
-    }
-  }
-
-  let Some(pdftoppm_cmd) = &state.pdftoppm_cmd else {
-    return Err(api_internal(
-      "pdftoppm is required to build PDF thumbnails but was not found",
-    ));
-  };
-
-  let original_absolute = state.storage_dir.join(&original_path);
-  let original_parent = Path::new(&original_path)
-    .parent()
-    .map(Path::to_path_buf)
-    .unwrap_or_else(|| PathBuf::from("."));
-  let relative_png = original_parent.join(format!("{}-thumb.png", attachment_id));
-  let output_prefix = state
-    .storage_dir
-    .join(original_parent)
-    .join(format!("{}-thumb", attachment_id));
-
-  let status = ProcessCommand::new(pdftoppm_cmd)
-    .arg("-png")
-    .arg("-singlefile")
-    .arg("-f")
-    .arg("1")
-    .arg("-scale-to")
-    .arg("220")
-    .arg(&original_absolute)
-    .arg(&output_prefix)
-    .status()
-    .map_err(|err| api_internal(format!("failed to launch pdftoppm: {err}")))?;
-
-  if !status.success() {
-    return Err(api_internal("pdftoppm failed while generating thumbnail"));
-  }
-
-  let relative_png_text = relative_png.to_string_lossy().to_string();
-  state
-    .client
-    .execute(
-      "update attachments set thumbnail_path = $1 where id::text = $2",
-      &[&relative_png_text, &attachment_id],
-    )
-    .await
-    .map_err(|err| api_internal(err.to_string()))?;
-
-  Ok(("image/png".to_string(), relative_png_text))
+) -> std::result::Result<(String, Vec<u8>), (StatusCode, String)> {
+  fetch_attachment_thumbnail_bytes(state, attachment_id).await
 }
 
 #[allow(dead_code)]
@@ -1217,10 +1398,12 @@ async fn run_db_init(args: DbArgs) -> Result<()> {
   let database_name = ensure_database_exists(&args).await?;
   let client = connect_postgres(&args.database_url).await?;
   let applied_now = apply_migrations(&client, &manifest_db_dir()).await?;
+  let backfilled = backfill_legacy_attachment_storage(&client, &args.storage_dir).await?;
 
   println!("database: {database_name}");
   println!("database_url: {}", redact_database_url(&args.database_url));
   println!("storage_dir: {}", args.storage_dir.display());
+  println!("attachment_backfilled_rows: {backfilled}");
   if applied_now.is_empty() {
     println!("migrations_applied: 0");
   } else {
@@ -1236,8 +1419,11 @@ async fn run_db_init(args: DbArgs) -> Result<()> {
 async fn run_db_migrate(args: DbArgs) -> Result<()> {
   let client = connect_postgres(&args.database_url).await?;
   let applied_now = apply_migrations(&client, &manifest_db_dir()).await?;
+  let backfilled = backfill_legacy_attachment_storage(&client, &args.storage_dir).await?;
 
   println!("database_url: {}", redact_database_url(&args.database_url));
+  println!("storage_dir: {}", args.storage_dir.display());
+  println!("attachment_backfilled_rows: {backfilled}");
   if applied_now.is_empty() {
     println!("migrations_applied: 0");
   } else {
@@ -1324,8 +1510,10 @@ async fn healthz() -> impl IntoResponse {
 }
 
 async fn app_css() -> std::result::Result<impl IntoResponse, (StatusCode, String)> {
-  let bytes = fs::read(frontend_asset_path(FRONTEND_APP_CSS))
-    .map_err(|err| api_internal(format!("failed to read web-dist/app.css: {err}")))?;
+  let bytes = embedded_frontend_file(FRONTEND_APP_CSS)
+    .ok_or_else(|| api_internal("embedded app.css is missing"))?
+    .contents()
+    .to_vec();
   Ok((
     [
       (header::CONTENT_TYPE, "text/css; charset=utf-8"),
@@ -1336,8 +1524,10 @@ async fn app_css() -> std::result::Result<impl IntoResponse, (StatusCode, String
 }
 
 async fn app_js() -> std::result::Result<impl IntoResponse, (StatusCode, String)> {
-  let bytes = fs::read(frontend_asset_path(FRONTEND_APP_JS))
-    .map_err(|err| api_internal(format!("failed to read web-dist/app.js: {err}")))?;
+  let bytes = embedded_frontend_file(FRONTEND_APP_JS)
+    .ok_or_else(|| api_internal("embedded app.js is missing"))?
+    .contents()
+    .to_vec();
   Ok((
     [
       (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
@@ -1350,29 +1540,30 @@ async fn app_js() -> std::result::Result<impl IntoResponse, (StatusCode, String)
 async fn font_asset(
   RoutePath(file_name): RoutePath<String>,
 ) -> std::result::Result<impl IntoResponse, (StatusCode, String)> {
-  let path = bundled_font_path(&file_name).map_err(|err| api_not_found(err.to_string()))?;
-  let bytes = fs::read(&path)
-    .map_err(|err| api_internal(format!("failed to read {}: {err}", path.display())))?;
-  Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes))
+  let bytes = bundled_font_bytes(&file_name)
+    .map_err(|err| api_not_found(err.to_string()))?
+    .to_vec();
+  Ok((
+    [
+      (header::CONTENT_TYPE, "application/octet-stream"),
+      (header::CACHE_CONTROL, "no-store"),
+    ],
+    bytes,
+  ))
 }
 
 async fn frontend_asset(
   RoutePath(asset_path): RoutePath<String>,
 ) -> std::result::Result<impl IntoResponse, (StatusCode, String)> {
-  let relative = PathBuf::from(&asset_path);
-  let dist_dir = manifest_frontend_dist_dir();
-  let mut full_path = dist_dir.join(&relative);
-  if !full_path.exists() {
-    full_path = dist_dir.join("assets").join(&relative);
-  }
-  if !full_path.starts_with(&dist_dir) {
-    return Err(api_not_found("asset not found"));
-  }
-  let bytes = fs::read(&full_path)
-    .map_err(|err| api_internal(format!("failed to read {}: {err}", full_path.display())))?;
+  let asset =
+    embedded_frontend_file(&asset_path).ok_or_else(|| api_not_found("asset not found"))?;
+  let bytes = asset.contents().to_vec();
   Ok((
     [
-      (header::CONTENT_TYPE, asset_content_type(&full_path)),
+      (
+        header::CONTENT_TYPE,
+        asset_content_type(Path::new(asset.path())),
+      ),
       (header::CACHE_CONTROL, "no-store"),
     ],
     bytes,
@@ -1609,7 +1800,8 @@ async fn api_issue_save(
            meeting_time = nullif($5, '')::time,
            place = $6,
            header_note = $7,
-           footer_note = $8
+           footer_note = $8,
+           source_version = source_version + 1
        where id::text = $9",
       &[
         &payload.issue_type,
@@ -1938,8 +2130,8 @@ async fn duplicate_issue_children(
          sort_order,
          original_filename,
          mime_type,
-         original_path,
-         thumbnail_path,
+         legacy_original_path,
+         legacy_thumbnail_path,
          page_count,
          width,
          height
@@ -2047,8 +2239,8 @@ async fn duplicate_issue_children(
     let sort_order = row.get::<_, i32>(3);
     let original_filename = row.get::<_, String>(4);
     let mime_type = row.get::<_, String>(5);
-    let original_path = row.get::<_, String>(6);
-    let thumbnail_path = row.get::<_, String>(7);
+    let legacy_original_path = row.get::<_, String>(6);
+    let legacy_thumbnail_path = row.get::<_, String>(7);
     let page_count = row.get::<_, Option<i32>>(8);
     let width = row.get::<_, Option<i32>>(9);
     let height = row.get::<_, Option<i32>>(10);
@@ -2067,89 +2259,63 @@ async fn duplicate_issue_children(
       })
       .transpose()?;
 
-    let duplicated_original_relative = duplicate_attachment_relative_path(
+    let duplicated_attachment_id = insert_attachment_metadata(
+      &state.client,
       duplicated_issue_id,
       &duplicated_block_id,
       duplicated_item_id.as_deref(),
-      &source_attachment_id,
-      &original_path,
-    );
-    copy_storage_file(
-      &state.storage_dir,
-      &original_path,
-      &duplicated_original_relative,
-    )?;
+      sort_order,
+      &original_filename,
+      &mime_type,
+      "",
+      "",
+      page_count,
+      width,
+      height,
+    )
+    .await?;
 
-    let source_thumbnail_absolute = state.storage_dir.join(&thumbnail_path);
-    let duplicated_thumbnail_relative = if thumbnail_path.is_empty()
-      || thumbnail_path == original_path
-      || !source_thumbnail_absolute.exists()
+    let (_, original_bytes) =
+      fetch_attachment_original_bytes(state.as_ref(), &source_attachment_id).await?;
+    upsert_attachment_original_content(&state.client, &duplicated_attachment_id, &original_bytes)
+      .await?;
+
+    if let Some((thumb_mime, thumb_bytes)) =
+      fetch_attachment_thumbnail_cache(state.as_ref(), &source_attachment_id).await?
     {
-      duplicated_original_relative.clone()
-    } else {
-      let duplicated_thumbnail_relative = duplicate_attachment_relative_path(
-        duplicated_issue_id,
-        &duplicated_block_id,
-        duplicated_item_id.as_deref(),
-        &format!("{source_attachment_id}-thumb"),
-        &thumbnail_path,
-      );
-      copy_storage_file(
-        &state.storage_dir,
-        &thumbnail_path,
-        &duplicated_thumbnail_relative,
-      )?;
-      duplicated_thumbnail_relative
-    };
-
-    let duplicated_original_text = duplicated_original_relative.to_string_lossy().to_string();
-    let duplicated_thumbnail_text = duplicated_thumbnail_relative.to_string_lossy().to_string();
-
-    state
-      .client
-      .execute(
-        "insert into attachments (
-           issue_id,
-           block_id,
-           item_id,
-           sort_order,
-           original_filename,
-           mime_type,
-           original_path,
-           thumbnail_path,
-           page_count,
-           width,
-           height
-         )
-         values (
-           (select id from issues where id::text = $1),
-           (select id from blocks where id::text = $2),
-           (select id from block_items where id::text = $3),
-           $4,
-           $5,
-           $6,
-           $7,
-           $8,
-           $9,
-           $10,
-           $11
-         )",
-        &[
-          &duplicated_issue_id,
-          &duplicated_block_id,
-          &duplicated_item_id,
-          &sort_order,
-          &original_filename,
-          &mime_type,
-          &duplicated_original_text,
-          &duplicated_thumbnail_text,
-          &page_count,
-          &width,
-          &height,
-        ],
+      upsert_attachment_thumbnail_cache(
+        &state.client,
+        &duplicated_attachment_id,
+        &thumb_mime,
+        &thumb_bytes,
       )
-      .await
-      .map_err(|err| api_internal(err.to_string()))?;
+      .await?;
+    } else if let Some(legacy_thumb_bytes) =
+      read_legacy_attachment_file(&state.storage_dir, &legacy_thumbnail_path)?
+    {
+      let thumb_mime = if attachment_display_kind(&mime_type) == "pdf" {
+        "image/png".to_string()
+      } else {
+        mime_type.clone()
+      };
+      upsert_attachment_thumbnail_cache(
+        &state.client,
+        &duplicated_attachment_id,
+        &thumb_mime,
+        &legacy_thumb_bytes,
+      )
+      .await?;
+    } else if attachment_display_kind(&mime_type) != "pdf" {
+      upsert_attachment_thumbnail_cache(
+        &state.client,
+        &duplicated_attachment_id,
+        &mime_type,
+        &original_bytes,
+      )
+      .await?;
+    }
+
+    let _ = legacy_original_path;
   }
 
   Ok(())
@@ -2338,6 +2504,116 @@ async fn ensure_first_item_for_block(
   Ok((inserted.get::<_, String>(0), issue_id))
 }
 
+async fn insert_attachment_metadata(
+  client: &Client,
+  issue_id: &str,
+  block_id: &str,
+  item_id: Option<&str>,
+  sort_order: i32,
+  original_filename: &str,
+  mime_type: &str,
+  legacy_original_path: &str,
+  legacy_thumbnail_path: &str,
+  page_count: Option<i32>,
+  width: Option<i32>,
+  height: Option<i32>,
+) -> std::result::Result<String, (StatusCode, String)> {
+  let inserted = client
+    .query_one(
+      "insert into attachments (
+         issue_id,
+         block_id,
+         item_id,
+         sort_order,
+         original_filename,
+         mime_type,
+         legacy_original_path,
+         legacy_thumbnail_path,
+         page_count,
+         width,
+         height
+       )
+       values (
+         (select id from issues where id::text = $1),
+         (select id from blocks where id::text = $2),
+         case
+           when $3::text is null or $3::text = '' then null
+           else (select id from block_items where id::text = $3)
+         end,
+         $4,
+         $5,
+         $6,
+         $7,
+         $8,
+         $9,
+         $10,
+         $11
+       )
+       returning id::text",
+      &[
+        &issue_id,
+        &block_id,
+        &item_id,
+        &sort_order,
+        &original_filename,
+        &mime_type,
+        &legacy_original_path,
+        &legacy_thumbnail_path,
+        &page_count,
+        &width,
+        &height,
+      ],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  Ok(inserted.get::<_, String>(0))
+}
+
+async fn store_attachment_upload(
+  state: &AppState,
+  issue_id: &str,
+  block_id: &str,
+  item_id: &str,
+  filename: &str,
+  mime_type: &str,
+  bytes: &[u8],
+) -> std::result::Result<(), (StatusCode, String)> {
+  let sort_row = state
+    .client
+    .query_one(
+      "select coalesce(max(sort_order), 0) + 1 from attachments where item_id::text = $1",
+      &[&item_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+  let sort_order = sort_row.get::<_, i32>(0);
+
+  let attachment_id = insert_attachment_metadata(
+    &state.client,
+    issue_id,
+    block_id,
+    Some(item_id),
+    sort_order,
+    filename,
+    mime_type,
+    "",
+    "",
+    None,
+    None,
+    None,
+  )
+  .await?;
+
+  upsert_attachment_original_content(&state.client, &attachment_id, bytes).await?;
+
+  if attachment_display_kind(mime_type) != "pdf" {
+    upsert_attachment_thumbnail_cache(&state.client, &attachment_id, mime_type, bytes).await?;
+  }
+
+  Ok(())
+}
+
 async fn api_item_attachment_upload(
   State(state): State<Arc<AppState>>,
   RoutePath(item_id): RoutePath<String>,
@@ -2377,64 +2653,16 @@ async fn api_item_attachment_upload(
       .await
       .map_err(|err| api_internal(err.to_string()))?;
 
-    let relative_dir = PathBuf::from("issues")
-      .join(&issue_id)
-      .join("attachments")
-      .join(&block_id)
-      .join(&item_id);
-    let absolute_dir = state.storage_dir.join(&relative_dir);
-    fs::create_dir_all(&absolute_dir).map_err(|err| api_internal(err.to_string()))?;
-
-    let relative_path = relative_dir.join(format!("{}-{}", unique_upload_stem(), filename));
-    let absolute_path = state.storage_dir.join(&relative_path);
-    fs::write(&absolute_path, bytes.as_ref()).map_err(|err| api_internal(err.to_string()))?;
-
-    let sort_row = state
-      .client
-      .query_one(
-        "select coalesce(max(sort_order), 0) + 1 from attachments where item_id::text = $1",
-        &[&item_id],
-      )
-      .await
-      .map_err(|err| api_internal(err.to_string()))?;
-    let sort_order = sort_row.get::<_, i32>(0);
-    let relative_path_text = relative_path.to_string_lossy().to_string();
-
-    state
-      .client
-      .execute(
-        "insert into attachments (
-           issue_id,
-           block_id,
-           item_id,
-           sort_order,
-           original_filename,
-           mime_type,
-           original_path,
-           thumbnail_path
-         )
-         values (
-           (select id from issues where id::text = $1),
-           (select id from blocks where id::text = $2),
-           (select id from block_items where id::text = $3),
-           $4,
-           $5,
-           $6,
-           $7,
-           $7
-         )",
-        &[
-          &issue_id,
-          &block_id,
-          &item_id,
-          &sort_order,
-          &filename,
-          &mime_type,
-          &relative_path_text,
-        ],
-      )
-      .await
-      .map_err(|err| api_internal(err.to_string()))?;
+    store_attachment_upload(
+      &state,
+      &issue_id,
+      &block_id,
+      &item_id,
+      &filename,
+      &mime_type,
+      bytes.as_ref(),
+    )
+    .await?;
     uploaded = true;
   }
 
@@ -2476,64 +2704,16 @@ async fn api_block_attachment_upload(
       .await
       .map_err(|err| api_internal(err.to_string()))?;
 
-    let relative_dir = PathBuf::from("issues")
-      .join(&issue_id)
-      .join("attachments")
-      .join(&block_id)
-      .join(&item_id);
-    let absolute_dir = state.storage_dir.join(&relative_dir);
-    fs::create_dir_all(&absolute_dir).map_err(|err| api_internal(err.to_string()))?;
-
-    let relative_path = relative_dir.join(format!("{}-{}", unique_upload_stem(), filename));
-    let absolute_path = state.storage_dir.join(&relative_path);
-    fs::write(&absolute_path, bytes.as_ref()).map_err(|err| api_internal(err.to_string()))?;
-
-    let sort_row = state
-      .client
-      .query_one(
-        "select coalesce(max(sort_order), 0) + 1 from attachments where item_id::text = $1",
-        &[&item_id],
-      )
-      .await
-      .map_err(|err| api_internal(err.to_string()))?;
-    let sort_order = sort_row.get::<_, i32>(0);
-    let relative_path_text = relative_path.to_string_lossy().to_string();
-
-    state
-      .client
-      .execute(
-        "insert into attachments (
-           issue_id,
-           block_id,
-           item_id,
-           sort_order,
-           original_filename,
-           mime_type,
-           original_path,
-           thumbnail_path
-         )
-         values (
-           (select id from issues where id::text = $1),
-           (select id from blocks where id::text = $2),
-           (select id from block_items where id::text = $3),
-           $4,
-           $5,
-           $6,
-           $7,
-           $7
-         )",
-        &[
-          &issue_id,
-          &block_id,
-          &item_id,
-          &sort_order,
-          &filename,
-          &mime_type,
-          &relative_path_text,
-        ],
-      )
-      .await
-      .map_err(|err| api_internal(err.to_string()))?;
+    store_attachment_upload(
+      &state,
+      &issue_id,
+      &block_id,
+      &item_id,
+      &filename,
+      &mime_type,
+      bytes.as_ref(),
+    )
+    .await?;
     uploaded = true;
   }
 
@@ -2556,7 +2736,7 @@ async fn api_attachment_delete(
   let attachment_row = state
     .client
     .query_opt(
-      "select issue_id::text, original_path, thumbnail_path from attachments where id::text = $1",
+      "select issue_id::text from attachments where id::text = $1",
       &[&attachment_id],
     )
     .await
@@ -2564,8 +2744,6 @@ async fn api_attachment_delete(
     .ok_or_else(|| api_not_found("attachment not found"))?;
 
   let issue_id = attachment_row.get::<_, String>(0);
-  let original_path = attachment_row.get::<_, String>(1);
-  let thumbnail_path = attachment_row.get::<_, String>(2);
 
   state
     .client
@@ -2575,13 +2753,6 @@ async fn api_attachment_delete(
     )
     .await
     .map_err(|err| api_internal(err.to_string()))?;
-
-  let original_abs = state.storage_dir.join(&original_path);
-  let thumbnail_abs = state.storage_dir.join(&thumbnail_path);
-  let _ = fs::remove_file(original_abs);
-  if thumbnail_path != original_path {
-    let _ = fs::remove_file(thumbnail_abs);
-  }
 
   let document = fetch_issue_document(&state.client, &issue_id)
     .await
@@ -2595,20 +2766,7 @@ async fn api_attachment_content(
   State(state): State<Arc<AppState>>,
   RoutePath(attachment_id): RoutePath<String>,
 ) -> std::result::Result<impl IntoResponse, (StatusCode, String)> {
-  let attachment_row = state
-    .client
-    .query_opt(
-      "select mime_type, original_path from attachments where id::text = $1",
-      &[&attachment_id],
-    )
-    .await
-    .map_err(|err| api_internal(err.to_string()))?
-    .ok_or_else(|| api_not_found("attachment not found"))?;
-
-  let mime_type = attachment_row.get::<_, String>(0);
-  let original_path = attachment_row.get::<_, String>(1);
-  let absolute_path = state.storage_dir.join(&original_path);
-  let bytes = fs::read(&absolute_path).map_err(|err| api_internal(err.to_string()))?;
+  let (mime_type, bytes) = fetch_attachment_original_bytes(&state, &attachment_id).await?;
 
   Ok(([(header::CONTENT_TYPE, mime_type)], bytes))
 }
@@ -2617,9 +2775,7 @@ async fn api_attachment_thumbnail(
   State(state): State<Arc<AppState>>,
   RoutePath(attachment_id): RoutePath<String>,
 ) -> std::result::Result<impl IntoResponse, (StatusCode, String)> {
-  let (mime_type, relative_path) = ensure_attachment_thumbnail(&state, &attachment_id).await?;
-  let absolute_path = state.storage_dir.join(relative_path);
-  let bytes = fs::read(&absolute_path).map_err(|err| api_internal(err.to_string()))?;
+  let (mime_type, bytes) = ensure_attachment_thumbnail(&state, &attachment_id).await?;
   Ok(([(header::CONTENT_TYPE, mime_type)], bytes))
 }
 
@@ -2639,6 +2795,8 @@ async fn shutdown_signal() {
 async fn run_web(args: WebArgs) -> Result<()> {
   ensure_storage_dirs(&args.storage_dir)?;
   let client = Arc::new(connect_postgres(&args.database_url).await?);
+  let applied_now = apply_migrations(&client, &manifest_db_dir()).await?;
+  let backfilled = backfill_legacy_attachment_storage(&client, &args.storage_dir).await?;
   let applied_migrations = Arc::new(list_applied_migrations(&client).await?);
   let bind = args
     .bind
@@ -2702,6 +2860,19 @@ async fn run_web(args: WebArgs) -> Result<()> {
   let listener = TcpListener::bind(bind)
     .await
     .with_context(|| format!("failed to bind {bind}"))?;
+  if !applied_now.is_empty() {
+    info!(
+      "applied {} database migrations on web startup",
+      applied_now.len()
+    );
+  }
+  if backfilled > 0 {
+    info!("backfilled {backfilled} legacy attachment rows into database storage");
+  }
+  info!(
+    "paper versions layout={} font={} renderer={}",
+    CURRENT_LAYOUT_VERSION, CURRENT_FONT_VERSION, CURRENT_RENDERER_VERSION
+  );
   info!("jokai web listening on http://{bind}");
   axum::serve(listener, app)
     .with_graceful_shutdown(shutdown_signal())
