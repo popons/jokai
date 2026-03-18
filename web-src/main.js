@@ -1,9 +1,12 @@
 import "./app.css";
 import {
+  ITEM_THUMBNAIL_SCALE_DEFAULT_PERCENT,
+  ITEM_THUMBNAIL_SCALE_LIMITS,
   PAPER_FONT_SCALE_DEFAULTS,
   PAPER_FONT_SCALE_LIMITS,
   PAPER_FONT_SCALE_ORDER,
   buildNoticePdfDocument,
+  normalizeItemThumbnailScalePercent,
   normalizePaperFontScale,
   pdfFileName,
 } from "./notice-pdf.js";
@@ -218,6 +221,7 @@ function normalizeItem(item = {}) {
     due_date: item.due_date || "",
     supplements,
     meta_layout: normalizeItemMetaLayout(item.meta_layout),
+    thumb_scale_percent: normalizeItemThumbnailScalePercent(item.thumb_scale_percent),
     sort_order: item.sort_order || 0,
     attachments: Array.isArray(item.attachments) ? item.attachments.map(normalizeAttachment) : [],
   };
@@ -249,6 +253,7 @@ function initialItem() {
     due_date: "",
     supplements: [],
     meta_layout: "stacked",
+    thumb_scale_percent: ITEM_THUMBNAIL_SCALE_DEFAULT_PERCENT,
     attachments: [],
   });
 }
@@ -316,6 +321,7 @@ function payloadFromState() {
           content: supplement.content,
         })),
         meta_layout: normalizeItemMetaLayout(item.meta_layout),
+        thumb_scale_percent: normalizeItemThumbnailScalePercent(item.thumb_scale_percent),
       })),
     })),
   };
@@ -607,6 +613,8 @@ function itemMarker(index) {
 function renderAttachmentList(item, blockIndex, itemIndex) {
   const attachments = item.attachments || [];
   const itemId = item.id ? escapeHtml(item.id) : "";
+  const thumbScalePercent = normalizeItemThumbnailScalePercent(item.thumb_scale_percent);
+  const thumbScaleDisabled = !attachments.length;
   const items = attachments.length
     ? attachments
         .map(
@@ -625,6 +633,20 @@ function renderAttachmentList(item, blockIndex, itemIndex) {
 
   return `
     <div class="attachment-block">
+      <div class="attachment-scale-row ${thumbScaleDisabled ? "is-disabled" : ""}">
+        <span class="attachment-scale-label">紙面サムネ</span>
+        <input
+          class="attachment-scale-slider"
+          data-item-thumb-scale="${blockIndex}:${itemIndex}"
+          type="range"
+          min="${ITEM_THUMBNAIL_SCALE_LIMITS.min}"
+          max="${ITEM_THUMBNAIL_SCALE_LIMITS.max}"
+          step="${ITEM_THUMBNAIL_SCALE_LIMITS.step}"
+          value="${thumbScalePercent}"
+          ${thumbScaleDisabled ? "disabled" : ""}
+        >
+        <span class="attachment-scale-value" data-item-thumb-scale-value="${blockIndex}:${itemIndex}">${escapeHtml(`${thumbScalePercent}%`)}</span>
+      </div>
       <div class="attachment-input-grid">
         <label class="upload-dropzone">
           <input data-upload-item-id="${itemId}" type="file" accept="application/pdf,image/*" ${item.id ? "" : "disabled"}>
@@ -1369,6 +1391,26 @@ function bindEditEvents() {
       state.blocks[blockIndex].items[itemIndex][field] = event.currentTarget.value;
       markDirty();
       schedulePreview(`item-${field}`);
+    };
+    node.addEventListener("input", handler);
+    node.addEventListener("change", handler);
+  });
+
+  document.querySelectorAll("[data-item-thumb-scale]").forEach((node) => {
+    const [blockIndex, itemIndex] = String(node.getAttribute("data-item-thumb-scale"))
+      .split(":")
+      .map((value) => Number(value));
+    const handler = (event) => {
+      const value = normalizeItemThumbnailScalePercent(event.currentTarget.value);
+      state.blocks[blockIndex].items[itemIndex].thumb_scale_percent = value;
+      const valueNode = document.querySelector(
+        `[data-item-thumb-scale-value="${blockIndex}:${itemIndex}"]`,
+      );
+      if (valueNode) {
+        valueNode.textContent = `${value}%`;
+      }
+      markDirty();
+      schedulePreview("item-thumb-scale");
     };
     node.addEventListener("input", handler);
     node.addEventListener("change", handler);

@@ -55,6 +55,7 @@
 - 添付資料の原本PDFや原本画像は、案内PDFに結合しないこと。
 - 添付資料は本体紙面ではサムネ表示のみとし、原本の閲覧やダウンロードは別導線に分離すること。
 - 最終ページ下端には footer 帯を置ける前提で組版すること。左下は任意赤字メッセージ、右下は必須連絡先ブロックを出す。
+- 項目ごとのサムネ倍率は右上基点で拡縮し、本文位置は動かさないこと。right-top は「見えている画像自体」の右上固定を意味し、pdfme の box 内中央寄せに任せないこと。サムネは本文より背面に置き、重なった本文は白まわりで可読性を守ること。
 
 # python
 
@@ -99,10 +100,10 @@ pythonコマンドないので、python3コマンドを使ってね
 ## Repo Map
 
 - `src/main.rs`: Axum エントリポイント。埋め込み frontend asset / 紙面用フォント配信、issue CRUD、issue の draft 限定削除、一覧からの深い複製、添付の DB 保存、内部 temp dir を使う preview / thumbnail 生成、`/issues/{id}/print` の印刷 shell 配信を担当。legacy filesystem 吸い上げは `db init` / `db migrate` の明示 `--legacy-storage-dir` 側へ分離した。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
-- `web-src/main.js`: 一覧画面と編集画面の UI、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集を担当。
-- `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計、item ごとの赤/青補足行群の組版をここで守る。
-- `web-src/app.css`: 編集UIとプレビューUIの見た目。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
-- `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `block_item_supplements` / `attachments` に加え、添付原本の `attachment_original_contents`、サムネ cache の `attachment_thumbnail_caches`、legacy な `generated_files` を定義する。
+- `web-src/main.js`: 一覧画面と編集画面の UI、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集、`thumb_scale_percent` による項目サムネ倍率 slider を担当。
+- `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計、item ごとの赤/青補足行群の組版、画像実寸比を踏まえた右上基点の項目サムネ倍率反映、本文白まわりの可読性確保、halo の top padding 超過防止をここで守る。
+- `web-src/app.css`: 編集UIとプレビューUIの見た目。項目サムネ倍率 slider のような非印刷UIの密度もここで保つ。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
+- `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `block_item_supplements` / `attachments` に加え、`block_items.thumb_scale_percent`、添付原本の `attachment_original_contents`、サムネ cache の `attachment_thumbnail_caches`、legacy な `generated_files` を定義する。
 - `bundled-assets/fonts/`: 紙面/PDF用にバイナリへ埋め込む固定フォントと license。`NotoSansJP-VF.ttf` は生成元で、配信用には `NotoSansJP-Regular.ttf` / `NotoSansJP-Bold.ttf` の static instance を使う。直接手編集は避け、差し替え時は license と version 方針も揃えること。
 - `web-dist/`: フロントエンドのビルド成果物。runtime ではバイナリへ埋め込んで配信するが、直接手編集しないこと。
 - `docs/exmple.png`: 紙面見本の唯一の正解。
@@ -114,7 +115,8 @@ pythonコマンドないので、python3コマンドを使ってね
 - 一覧画面の既存案内カード導線を触るときは、`web-src/main.js` の `renderIndex` と `src/main.rs` の `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/duplicate` をセットで確認すること。`published` の削除不可は UI と API の両方で守ること。
 - 編集画面の操作性を触るときは、`web-src/main.js` の DOM 構造と `web-src/app.css` の gap/padding/min-height を一緒に見ること。片方だけ触ると、また間延びする。
 - item 添付導線を触るときは、`web-src/main.js` のファイル選択・貼り付け・`Clipboardから追加` ボタンの 3 導線が同じ `POST /api/items/{id}/attachments` に収束している前提を崩さないこと。本文入力欄の通常貼り付けは横取りしないこと。
-- item の補足行群（赤/青）・対象者・期限の紙面表示を触るときは、`web-src/main.js` の補足行 UI と `meta_layout` UI、`web-src/notice-pdf.js` の補足行/メタ行生成、`src/main.rs` と `db/*.sql` の `block_item_supplements` / `block_items.meta_layout` をセットで確認すること。
+- item の補足行群（赤/青）・対象者・期限・項目サムネ倍率の紙面表示を触るときは、`web-src/main.js` の補足行 UI / `meta_layout` UI / サムネ倍率 slider、`web-src/notice-pdf.js` の補足行/メタ行/サムネ描画、`src/main.rs` と `db/*.sql` の `block_item_supplements` / `block_items.meta_layout` / `block_items.thumb_scale_percent` をセットで確認すること。
+- right-top のズレや preview が `/api/preview-renders` 到達前に固まる症状を触るときは、まず `web-src/notice-pdf.js` の `measureImageDataUrl()` と `pushTextSchema()` の top padding clamp を確認すること。
 - 紙面/PDF 用フォントを触るときは、`bundled-assets/fonts/README.md`、`src/main.rs` の埋め込み配信、`web-src/notice-pdf.js` の `loadFonts()` をセットで確認すること。紙面側は Web フォント前提に戻さず、可変フォントをそのまま `pdfme` に渡さないこと。
 - プレビュー不一致を触るときは `web-src/main.js` と `src/main.rs` の `/api/preview-renders` をセットで確認すること。
 - 最終PDFの出力不具合を触るときは、まず `web-src/main.js` の `downloadNoticePdf` / `openPrintPageFromEditor` と `web-src/notice-pdf.js` を確認し、印刷 shell は `src/main.rs` の `/issues/{id}/print` を見ること。`/api/issues/{id}/print-pdf` は廃止メッセージを返す互換導線。

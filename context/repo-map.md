@@ -17,8 +17,8 @@
 | Path | Role |
 |---|---|
 | `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、issue 一覧 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信。紙面フォントは `NotoSansJP-Regular.ttf` / `NotoSansJP-Bold.ttf` を配信し、preview rasterize は高DPI PNG を返す。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
-| `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替えを担当 |
-| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
+| `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替え、`thumb_scale_percent` による項目単位サムネ倍率 slider を担当 |
+| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。右脇サムネは `thumb_scale_percent` で項目ごとに 80〜200% を右上基点で拡縮し、`measureImageDataUrl()` で実画像アスペクト比を測って「見えている画像」自体の右上を固定する。画像自体は全テキストの背面へ置き、`pushTextSchema()` の halo は blank page の top padding を割らないよう clamp する。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
 | `db/001_init.sql` | `issues` / `blocks` / `attachments` / `generated_files` 初期定義 |
 | `db/002_block_items.sql` | `block_items` 導入と添付の item 単位紐付け移行 |
@@ -43,7 +43,7 @@
 
 `GET /issues/{id}/edit`  
 -> `web-src/main.js` が issue / block / attachment を state に正規化  
--> item ごとの補足行群を `block_item_supplements` から読み込み、`meta_layout` は対象者/期限の並びだけを `same_line` / `stacked` として payload へ含めて保存する  
+-> item ごとの補足行群を `block_item_supplements` から読み込み、`meta_layout` は対象者/期限の並びだけを `same_line` / `stacked` として、`thumb_scale_percent` は右脇サムネ倍率として payload へ含めて保存する  
 -> 入力変更時に save payload を構築  
 -> `PUT /api/issues/{id}` で保存し、`issues.source_version` を加算する
 
@@ -77,6 +77,8 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 | A4 縦固定 | `web-src/notice-pdf.js` の `A4_WIDTH_MM = 210`, `A4_HEIGHT_MM = 297` |
 | 左本文・右資料サムネ | 本文は概ね `x=14` 起点、右サムネ列は `addItemRow` の `sideX = 146` を基点に構成 |
 | item 本文・補足行・メタの表示 | 本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。補足行は `block_item_supplements` の入力順で本文直下に縦積みし、`block_items.meta_layout` は対象者/期限だけを `same_line` / `stacked` で制御する |
+| 項目サムネ倍率 | `block_items.thumb_scale_percent` は 80〜200 の 5 刻み。right-top は schema box ではなく見えている画像自体の右上固定を意味し、本文位置は動かさない。縦方向の重なりは許容し、画像は常に全テキストの背面へ置く |
+| 白ハロー境界 | テキスト halo の上方向オフセットは `BLANK_A4_PDF.padding[0]` を下回らないよう clamp し、pdfme の dynamic page 計算で page -1 を踏まない |
 | プレビューと最終PDFの見た目を揃える | プレビューは同じ PDF bytes を rasterize して表示する |
 | 編集 chrome は過度に広げない | `masthead` / `editor-actions` / `card` / `asset-stage` は作業負荷を増やさない密度を保つ |
 | 最終ページ footer | 左下は issue ごとの任意赤字メッセージ、右下は固定必須の連絡先ブロック。footer 帯を予約して本文と衝突させない |
@@ -91,7 +93,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 | `issues` | 案内全体 | `issue_type`, `status`, `meeting_date`, `place`, `header_note`, 最終ページ左下用 `footer_note` などを保持 |
 | `issues.source_version` / `published_*_version` | 再現用 version 刻印 | save ごとに `source_version` が増え、`published` 遷移時は source/layout/font/renderer の version を固定化する |
 | `blocks` | セクション単位 | `agenda` / `submission` / `distribution` / `info` / `freeform` |
-| `block_items` | 各ブロック内の箇条項目 | `db/002_block_items.sql` で導入。旧 `blocks.body` 系からの移行先。`meta_layout` は対象者/期限の紙面表示だけを `same_line` / `stacked` で保持する |
+| `block_items` | 各ブロック内の箇条項目 | `db/002_block_items.sql` で導入。旧 `blocks.body` 系からの移行先。`meta_layout` は対象者/期限の紙面表示だけを `same_line` / `stacked` で保持し、`thumb_scale_percent` は項目単位の右脇サムネ倍率を保持する |
 | `block_item_supplements` | item ごとの補足行 | `db/005_block_item_supplements.sql` で導入。赤/青の補足行を複数保持し、旧 `block_items.note` は初回 migration 時に先頭の赤補足へ吸い上げる |
 | `attachments` | 添付メタデータ | `item_id` 単位で紐付け。原本/サムネ本体ではなく filename・mime・legacy path・紙面補助メタを持つ |
 | `attachment_original_contents` | 添付原本の正本 | `bytea` で原本 bytes を保持する。新規 upload はここが正本 |
@@ -126,6 +128,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 - `web-src/` を触ったら `npm run build` で `web-dist/` を更新する。配信は埋め込みだが、埋め込み元はこの build 成果物。
 - 変更後は `cargo fmt` を実行する。
 - `cargo check` / `cargo test` / `cargo clippy` はバックグラウンド監視へ委ね、保存後 1 秒待ってから `build-error.txt` / `test-error.txt` / `build-error-win.txt` / `clippy-error.txt` を読む。
+- preview が固まるときは、まず browser network で `/api/preview-renders` が発火しているかを見る。発火前なら `buildNoticePdfDocument()` 内、特に thumbnail 寸法測定や text halo の座標計算を疑う。
 - 一覧カードの操作を触ったら、`draft` で `複製` / `削除` が出ること、`published` の `削除` が disabled のまま API でも拒否されることを確認する。
 - item 添付導線を触ったら、ファイル選択、貼り付け欄での `Ctrl+V` / `Cmd+V`、`Clipboardから追加` ボタン、本文 textarea での通常テキスト貼り付け非干渉を確認する。
 - 紙面を変える前に `docs/exmple.png` を確認し、差分の理由を説明できない変更は入れない。

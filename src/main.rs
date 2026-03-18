@@ -204,6 +204,7 @@ struct IssueDocumentItem {
   note: String,
   supplements: Vec<IssueDocumentItemSupplement>,
   meta_layout: String,
+  thumb_scale_percent: i32,
   sort_order: i32,
   attachments: Vec<IssueDocumentAttachment>,
 }
@@ -308,6 +309,8 @@ struct SaveItemPayload {
   supplements: Vec<SaveItemSupplementPayload>,
   #[serde(default)]
   meta_layout: String,
+  #[serde(default = "default_item_thumb_scale_percent")]
+  thumb_scale_percent: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -541,6 +544,10 @@ const ITEM_META_LAYOUT_STACKED: &str = "stacked";
 const ITEM_META_LAYOUT_SAME_LINE: &str = "same_line";
 const ITEM_SUPPLEMENT_TONE_RED: &str = "red";
 const ITEM_SUPPLEMENT_TONE_BLUE: &str = "blue";
+const ITEM_THUMB_SCALE_PERCENT_MIN: i32 = 80;
+const ITEM_THUMB_SCALE_PERCENT_MAX: i32 = 200;
+const ITEM_THUMB_SCALE_PERCENT_STEP: i32 = 5;
+const ITEM_THUMB_SCALE_PERCENT_DEFAULT: i32 = 100;
 
 fn normalize_item_meta_layout(raw: &str) -> &'static str {
   if raw.trim() == ITEM_META_LAYOUT_SAME_LINE {
@@ -548,6 +555,18 @@ fn normalize_item_meta_layout(raw: &str) -> &'static str {
   } else {
     ITEM_META_LAYOUT_STACKED
   }
+}
+
+fn default_item_thumb_scale_percent() -> i32 {
+  ITEM_THUMB_SCALE_PERCENT_DEFAULT
+}
+
+fn normalize_item_thumb_scale_percent(raw: i32) -> i32 {
+  let rounded = ((raw - ITEM_THUMB_SCALE_PERCENT_MIN) as f32 / ITEM_THUMB_SCALE_PERCENT_STEP as f32)
+    .round() as i32
+    * ITEM_THUMB_SCALE_PERCENT_STEP
+    + ITEM_THUMB_SCALE_PERCENT_MIN;
+  rounded.clamp(ITEM_THUMB_SCALE_PERCENT_MIN, ITEM_THUMB_SCALE_PERCENT_MAX)
 }
 
 fn normalize_item_supplement_tone(raw: &str) -> &'static str {
@@ -1402,6 +1421,7 @@ async fn fetch_issue_document(
          to_char(due_date, 'YYYY-MM-DD'),
          note,
          coalesce(meta_layout, 'stacked'),
+         coalesce(thumb_scale_percent, 100),
          sort_order
        from block_items
        where block_id in (
@@ -1511,7 +1531,8 @@ async fn fetch_issue_document(
       note: legacy_note_from_supplements(&supplements),
       supplements,
       meta_layout: normalize_item_meta_layout(&row.get::<_, String>(7)).to_string(),
-      sort_order: row.get::<_, i32>(8),
+      thumb_scale_percent: normalize_item_thumb_scale_percent(row.get::<_, i32>(8)),
+      sort_order: row.get::<_, i32>(9),
       attachments: attachments_by_item.remove(&item_id).unwrap_or_default(),
     };
     items_by_block.entry(block_id).or_default().push(item);
@@ -1560,6 +1581,7 @@ async fn fetch_issue_document(
             note: legacy_note_from_supplements(&supplements),
             supplements,
             meta_layout: ITEM_META_LAYOUT_STACKED.to_string(),
+            thumb_scale_percent: ITEM_THUMB_SCALE_PERCENT_DEFAULT,
             sort_order: 1,
             attachments,
           });
@@ -2164,6 +2186,7 @@ async fn api_issue_save(
       let item_due_date = item.due_date.trim().to_string();
       let item_supplements = normalize_save_item_supplements(&item.supplements, &item.note);
       let item_meta_layout = normalize_item_meta_layout(&item.meta_layout).to_string();
+      let item_thumb_scale_percent = normalize_item_thumb_scale_percent(item.thumb_scale_percent);
       let maybe_item_id = item
         .id
         .as_deref()
@@ -2182,8 +2205,9 @@ async fn api_issue_save(
                    audience_label = $4,
                    due_date = nullif($5, '')::date,
                    note = '',
-                   meta_layout = $6
-               where id::text = $7 and block_id::text = $8",
+                   meta_layout = $6,
+                   thumb_scale_percent = $7
+               where id::text = $8 and block_id::text = $9",
               &[
                 &item_sort_order,
                 &item_heading,
@@ -2191,6 +2215,7 @@ async fn api_issue_save(
                 &item_audience_label,
                 &item_due_date,
                 &item_meta_layout,
+                &item_thumb_scale_percent,
                 &item_id,
                 &resolved_block_id,
               ],
@@ -2211,7 +2236,8 @@ async fn api_issue_save(
                  audience_label,
                  due_date,
                  note,
-                 meta_layout
+                 meta_layout,
+                 thumb_scale_percent
                )
                values (
                  (select id from blocks where id::text = $1),
@@ -2221,7 +2247,8 @@ async fn api_issue_save(
                  $5,
                  nullif($6, '')::date,
                  '',
-                 $7
+                 $7,
+                 $8
                )
                returning id::text",
               &[
@@ -2232,6 +2259,7 @@ async fn api_issue_save(
                 &item_audience_label,
                 &item_due_date,
                 &item_meta_layout,
+                &item_thumb_scale_percent,
               ],
             )
             .await
@@ -2252,7 +2280,8 @@ async fn api_issue_save(
                audience_label,
                due_date,
                note,
-               meta_layout
+               meta_layout,
+               thumb_scale_percent
              )
              values (
                (select id from blocks where id::text = $1),
@@ -2262,7 +2291,8 @@ async fn api_issue_save(
                $5,
                nullif($6, '')::date,
                '',
-               $7
+               $7,
+               $8
              )
              returning id::text",
             &[
@@ -2273,6 +2303,7 @@ async fn api_issue_save(
               &item_audience_label,
               &item_due_date,
               &item_meta_layout,
+              &item_thumb_scale_percent,
             ],
           )
           .await
@@ -2363,6 +2394,7 @@ async fn duplicate_issue_children(
          to_char(due_date, 'YYYY-MM-DD'),
          note,
          coalesce(meta_layout, 'stacked'),
+         coalesce(thumb_scale_percent, 100),
          sort_order
        from block_items
        where block_id in (
@@ -2502,7 +2534,8 @@ async fn duplicate_issue_children(
            audience_label,
            due_date,
            note,
-           meta_layout
+           meta_layout,
+           thumb_scale_percent
          )
          values (
            (select id from blocks where id::text = $1),
@@ -2512,17 +2545,19 @@ async fn duplicate_issue_children(
            $5,
            nullif($6, '')::date,
            '',
-           $7
+           $7,
+           $8
          )
          returning id::text",
         &[
           &duplicated_block_id,
-          &row.get::<_, i32>(8),
+          &row.get::<_, i32>(9),
           &row.get::<_, String>(2),
           &row.get::<_, String>(3),
           &row.get::<_, String>(4),
           &row.get::<_, Option<String>>(5).unwrap_or_default(),
           &normalize_item_meta_layout(&row.get::<_, String>(7)).to_string(),
+          &normalize_item_thumb_scale_percent(row.get::<_, i32>(8)),
         ],
       )
       .await

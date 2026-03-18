@@ -597,6 +597,37 @@ button {
   gap: 6px;
 }
 
+.attachment-scale-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 2px 0;
+}
+
+.attachment-scale-row.is-disabled {
+  opacity: 0.56;
+}
+
+.attachment-scale-label,
+.attachment-scale-value {
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.attachment-scale-value {
+  min-width: 3.4rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.attachment-scale-slider {
+  width: 100%;
+  margin: 0;
+  accent-color: #5b7cf0;
+}
+
 .supplement-stack {
   display: grid;
   gap: 6px;

@@ -118,6 +118,24 @@
 - 2026-03-14 14:11:14 +0900 [修正] `web-src/notice-pdf.js` の footer 下限を `BLANK_A4_PDF.padding[2] + 0.6mm` ベースへ変更。blank page の下 padding 内へ footer box が食い込まないようにした。
 - 2026-03-14 14:11:14 +0900 [ビルド] `npm run build` を実行し `web-dist/app.js` / `web-dist/app.css` を更新。`cargo fmt` も実行済み。
 - 2026-03-14 14:12:47 +0900 [検証] live preview を再読込し `.pdf-preview-image` が 2 件→1 件へ減少したことを確認。右下連絡先 3 行は同一ページ内に残り、分断は解消。
+- 2026-03-19 02:02:29 +0900 [確認] `build-error.txt` と `test-error.txt` は成功状態、`clippy-error.txt` も失敗なし。`build-error-win.txt` は未生成で不在を確認。
+- 2026-03-19 02:02:29 +0900 [調査] 要件定義開始依頼に合わせて skill を確認。`requirements-intake` の登録パス片方は古く、実体は `/home/fuse/.codex/skills/requirements-intake/SKILL.md` 側にあることを確認した。
+- 2026-03-19 02:03:21 +0900 [調査] `docs/exmple.png` を確認。右脇サムネは本文の識別補助として赤ラベル付きで使われており、単純拡大は本文面積と競合する設計だと再確認。
+- 2026-03-19 02:03:21 +0900 [分析] 現行 `web-src/notice-pdf.js` はサムネを `22mm x 13.2mm` 固定で描画し、`block_items` / API payload / `normalizeItem()` に項目ごとのサムネ倍率フィールドは存在しない。要件どおりなら DB・保存・UI・紙面計算の4点セット改修が必要。
+- 2026-03-19 02:04:10 +0900 [要件] ユーザー要望を整理。サムネ拡縮は右上基点固定、本文位置は絶対不変、サムネは最背面、重なった本文は白まわりで可読性確保、行高増加や再レイアウトは不可、縦方向の重なりは許容と確定した。
+- 2026-03-19 02:14:44 +0900 [実装] `db/006_block_item_thumbnail_scale.sql` を追加し、`block_items.thumb_scale_percent` を 80〜200 / 5刻み / 既定100 で保持する土台を追加。Rust の読込・保存・複製経路にも同フィールドを通した。
+- 2026-03-19 02:14:44 +0900 [実装] `web-src/main.js` に項目ごとの小型 slider を追加し、`web-src/notice-pdf.js` では右上基点拡縮・画像の全テキスト背面化・白ハロー付き本文描画を実装。`context/repo-map.md` も `thumb_scale_percent` 前提へ更新。
+- 2026-03-19 02:15:50 +0900 [検証] `cargo fmt` 実行後に `npm run build` を通し、`web-dist/app.js` / `web-dist/app.css` を更新。保存後 1 秒待機して `build-error.txt` / `test-error.txt` / `clippy-error.txt` を確認し、失敗なしを再確認した。`build-error-win.txt` は引き続き未生成。
+- 2026-03-19 02:28:48 +0900 [保守] `codified-context-maintenance` を implementation-followup として実施。routing audit の結果、`context/repo-map.md` は追従済みだが `AGENTS.md` が `thumb_scale_percent` と項目サムネ倍率導線をまだ知らないことを確認。新規 context doc / skill は不要、`AGENTS.md` の小規模保守だけで足りると判断。
+- 2026-03-19 02:29:26 +0900 [保守] `AGENTS.md` の `Jokai 紙面ルール`・`Repo Map`・`作業ルーティング` を更新し、項目サムネ倍率の右上基点・本文固定・背面描画・白まわり可読性、および `thumb_scale_percent` の確認導線を正本 instruction 側へ反映した。
+- 2026-03-19 02:33:37 +0900 [調査] ユーザー報告の preview 例外を再現。`buildNoticePdfDocument()` の失敗源は `notice-pdf.js` 直下ではなく `pdfme` の dynamicTemplate で、schema の `position/size` に NaN が混ざると `pages[currentPageIndex]` が壊れることを確認。原因 schema を特定するため template 数値検証を追加した。
+- 2026-03-19 02:34:31 +0900 [修正] 真因は NaN ではなく、白ハローの上方向オフセットで `y=10mm` 要素が top padding 未満へ落ち、`pdfme` が page -1 扱いしていたことと判明。`pushTextSchema()` の halo `y` を top padding 以上へ clamp し、template 検証にも top padding 下限チェックを追加した。
+- 2026-03-19 02:36:58 +0900 [起動] ユーザー指定どおり `./watch-run-server.sh` を実行。`npm run build` 後に `target/debug/jokai web ... --bind 0.0.0.0:12040` が起動し、`/healthz` は `ok` を返した。
+- 2026-03-19 02:49:05 +0900 [修正] ユーザー提示画像を確認し、`pdfme` の image schema が box 内中央寄せ `contain` であることを確認。`web-src/notice-pdf.js` で thumbnail data URL の実アスペクト比を測り、見えている画像自体を Top|Right 基点で拡縮するよう変更した。
+- 2026-03-19 02:50:20 +0900 [修正] browser 外側の network probe では `/api/preview-renders` が飛ばず、preview 生成が rasterize 前で停止していた。新設した `measureImageDataUrl()` が待ちっぱなしになる経路を疑い、2秒 timeout で `null` fallback するガードを追加。
+- 2026-03-19 02:53:35 +0900 [検証] `./watch-run-server.sh` 上で再build成功を確認。headless browser は `--no-sandbox` 指定で `/healthz` smoke までは通る一方、編集ページ probe はこの環境で不安定。clean run の network probe では `/assets/app.js` と `/api/issues/{id}` の 200 応答までは確認したが、preview 完了の自動確証までは未取得。
+- 2026-03-19 02:55:30 +0900 [保守] `codified-context-maintenance` を debug-followup として再実施。今回の durable lesson は「Top|Right は box ではなく見えている画像の右上基点」「white halo は top padding を割らない」「thumbnail 寸法測定は待ちっぱなし fallback を持つ」の3点で、新規 doc ではなく `AGENTS.md` と `context/repo-map.md` の小規模追記で十分と判断。
+- 2026-03-19 02:56:18 +0900 [保守] `AGENTS.md` と `context/repo-map.md` を更新。right-top の意味を「見えている画像自体の右上固定」と明文化し、`measureImageDataUrl()`・`pushTextSchema()`・`/api/preview-renders` 発火有無を preview 調査の起点として codified context に反映した。
 - 2026-03-14 14:12:47 +0900 [検証] `平古場生産組合 3月度常会の案内 (2).pdf` を再出力し `pdfinfo` で `Pages: 1` を確認。`pdftotext -layout` でも連絡先 3 行が同一ページ末尾へ並んでいる。
 - 2026-03-14 14:39:35 +0900 [実装] `web-src/main.js` に編集画面専用の `Ctrl+P` / `Cmd+P` ハンドラを追加。編集画面ではブラウザ既定印刷を抑止し、未保存変更があれば先に `saveEditor()` 成功を待ってから `/issues/{id}/print` へ遷移するようにした。
 - 2026-03-14 14:39:35 +0900 [実装] `saveEditor()` を真偽値返却へ整理し、ショートカット経由でも保存失敗時に印刷画面へ進まないようにした。
@@ -289,3 +307,8 @@
 - 2026-03-19 01:59:35 +0900 [codified-context] codified-context-maintenance再開。本文・補足行インデント変更に対する変更検査とルーティング監査を実行。
 - 2026-03-19 02:00:09 +0900 [codified-context更新] context/repo-map.md に本文・補足行・メタ行の一文字インデント規則を反映。
 - 2026-03-19 02:00:20 +0900 [コミット準備] 本文・補足行インデント調整と codified context 更新をstage。xxx.svg は今回も除外。
+- 2026-03-19 02:56:07 +0900 [調査開始] build-error.txt/test-error.txt と context/repo-map.md を確認し、要件定義の前提整理を開始。
+- 2026-03-19 02:56:07 +0900 [SVG確認] `xxx.svg` に `$a`〜`$d` の差し込みテキストがあり、固定座標の SVG テンプレ案として成立していることを確認。
+- 2026-03-19 02:56:07 +0900 [見本確認] `docs/exmple.png` と元画像を比較し、既存の常会案内レイアウトとは別系統の「表帳票テンプレート」機能として考える必要があると判断。
+- 2026-03-19 02:57:05 +0900 [設計観点] 単発差し込み `$keiyakusha` と繰り返し行の表現は別問題であり、単一の KVS/EAV モデルだけで吸収すると破綻しやすいと判断。
+- 2026-03-19 02:57:05 +0900 [外部確認] pdfme 公式仕様も確認し、テンプレートが `basePdf + schema`、SVG/table/custom schema が候補になることを把握。

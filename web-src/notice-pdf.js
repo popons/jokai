@@ -23,6 +23,7 @@ const FOOTER_GAP_ABOVE_MM = 4.5;
 const BLANK_PAGE_PADDING_BOTTOM_MM = Array.isArray(BLANK_A4_PDF.padding)
   ? Number(BLANK_A4_PDF.padding[2] || 0)
   : 0;
+const BLANK_PAGE_PADDING_TOP_MM = Array.isArray(BLANK_A4_PDF.padding) ? Number(BLANK_A4_PDF.padding[0] || 0) : 0;
 // Keep footer boxes above pdfme's blank-page bottom padding.
 const FOOTER_BOX_SLACK_MM = 0.6;
 const FOOTER_BOTTOM_MARGIN_MM = BLANK_PAGE_PADDING_BOTTOM_MM + FOOTER_BOX_SLACK_MM;
@@ -34,6 +35,31 @@ const FOOTER_NOTE_FONT_SIZE = 9;
 const FOOTER_NOTE_LINE_HEIGHT = 1.22;
 const FOOTER_CONTACT_FONT_SIZE = 8.6;
 const FOOTER_CONTACT_LINE_HEIGHT = 1.22;
+export const ITEM_THUMBNAIL_SCALE_DEFAULT_PERCENT = 100;
+export const ITEM_THUMBNAIL_SCALE_LIMITS = Object.freeze({
+  min: 80,
+  max: 200,
+  step: 5,
+});
+const THUMB_BASE_X = 146;
+const THUMB_BASE_WIDTH_MM = 22;
+const THUMB_BASE_HEIGHT_MM = 13.2;
+const THUMB_BASE_RIGHT_X = THUMB_BASE_X + THUMB_BASE_WIDTH_MM;
+const THUMB_LABEL_X = THUMB_BASE_X + 24.4;
+const THUMB_LABEL_WIDTH_MM = 24;
+const THUMB_SLOT_HEIGHT_MM = 16.6;
+const THUMB_SLOT_GAP_MM = 2.6;
+const TEXT_HALO_COLOR = "#ffffff";
+const TEXT_HALO_OFFSETS_MM = Object.freeze([
+  [-0.32, 0],
+  [0.32, 0],
+  [0, -0.32],
+  [0, 0.32],
+  [-0.24, -0.24],
+  [0.24, -0.24],
+  [-0.24, 0.24],
+  [0.24, 0.24],
+]);
 export const PAPER_FONT_SCALE_ORDER = Object.freeze([
   "title",
   "header",
@@ -60,6 +86,7 @@ const canvas = document.createElement("canvas");
 const context = canvas.getContext("2d");
 const fontCache = new Map();
 const attachmentDataUrlCache = new Map();
+const attachmentDimensionCache = new Map();
 
 function mmToPx(value) {
   return value * MM_TO_PX;
@@ -85,6 +112,20 @@ function clampPaperFontScaleValue(value) {
     Math.round(Number(value || PAPER_FONT_SCALE_DEFAULT_PERCENT) / PAPER_FONT_SCALE_LIMITS.step) *
     PAPER_FONT_SCALE_LIMITS.step;
   return Math.min(PAPER_FONT_SCALE_LIMITS.max, Math.max(PAPER_FONT_SCALE_LIMITS.min, rounded));
+}
+
+function clampItemThumbnailScaleValue(value) {
+  const numeric = Number(value);
+  const normalized = Number.isFinite(numeric) ? numeric : ITEM_THUMBNAIL_SCALE_DEFAULT_PERCENT;
+  const rounded =
+    Math.round((normalized - ITEM_THUMBNAIL_SCALE_LIMITS.min) / ITEM_THUMBNAIL_SCALE_LIMITS.step) *
+      ITEM_THUMBNAIL_SCALE_LIMITS.step +
+    ITEM_THUMBNAIL_SCALE_LIMITS.min;
+  return Math.min(ITEM_THUMBNAIL_SCALE_LIMITS.max, Math.max(ITEM_THUMBNAIL_SCALE_LIMITS.min, rounded));
+}
+
+export function normalizeItemThumbnailScalePercent(value) {
+  return clampItemThumbnailScaleValue(value);
 }
 
 export function normalizePaperFontScale(raw = {}) {
@@ -425,6 +466,31 @@ function createImageSchema({ name, x, y, width, height, content, opacity = 1 }) 
   };
 }
 
+function mmPrecise(value) {
+  return Number(value.toFixed(2));
+}
+
+function clampSchemaY(value) {
+  return Math.max(BLANK_PAGE_PADDING_TOP_MM, mmPrecise(value));
+}
+
+function pushTextSchema(page, options, { halo = false } = {}) {
+  if (halo) {
+    TEXT_HALO_OFFSETS_MM.forEach(([dx, dy], index) => {
+      page.push(
+        createTextSchema({
+          ...options,
+          name: `${options.name}-halo-${index}`,
+          x: mmPrecise(options.x + dx),
+          y: clampSchemaY(options.y + dy),
+          fontColor: TEXT_HALO_COLOR,
+        }),
+      );
+    });
+  }
+  page.push(createTextSchema(options));
+}
+
 let fontPromise = null;
 
 async function loadFonts() {
@@ -467,6 +533,46 @@ async function dataUrlFromUrl(url, fallbackLabel) {
   return attachmentDataUrlCache.get(url);
 }
 
+async function measureImageDataUrl(dataUrl) {
+  if (!dataUrl) {
+    return null;
+  }
+  if (!attachmentDimensionCache.has(dataUrl)) {
+    attachmentDimensionCache.set(
+      dataUrl,
+      new Promise((resolve) => {
+        if (typeof Image === "undefined") {
+          resolve(null);
+          return;
+        }
+        const image = new Image();
+        let settled = false;
+        const finish = (result) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          window.clearTimeout(timeoutId);
+          resolve(result);
+        };
+        const timeoutId = window.setTimeout(() => finish(null), 2000);
+        image.onload = () => {
+          const width = Number(image.naturalWidth || image.width || 0);
+          const height = Number(image.naturalHeight || image.height || 0);
+          if (width > 0 && height > 0) {
+            finish({ width, height, aspectRatio: width / height });
+            return;
+          }
+          finish(null);
+        };
+        image.onerror = () => finish(null);
+        image.src = dataUrl;
+      }),
+    );
+  }
+  return attachmentDimensionCache.get(dataUrl);
+}
+
 function attachmentAssetKey(block, item) {
   return item.id || `${block.id || block.sort_order}:${item.sort_order}`;
 }
@@ -480,17 +586,21 @@ async function buildAttachmentAssets(blocks) {
           const rows = await Promise.all(
             (item.attachments || []).map(async (attachment, index) => {
               if (attachment.display_kind === "pdf" || attachment.display_kind === "image") {
+                const dataUrl = await dataUrlFromUrl(
+                  attachment.thumbnail_url,
+                  attachment.display_kind === "pdf" ? "PDF" : "IMAGE",
+                );
+                const measured = await measureImageDataUrl(dataUrl);
                 return {
-                  dataUrl: await dataUrlFromUrl(
-                    attachment.thumbnail_url,
-                    attachment.display_kind === "pdf" ? "PDF" : "IMAGE",
-                  ),
+                  dataUrl,
                   filename: attachment.original_filename || `資料${index + 1}`,
+                  aspectRatio: measured?.aspectRatio || null,
                 };
               }
               return {
                 dataUrl: svgDataUrl("FILE", "#d7d7d7"),
                 filename: attachment.original_filename || `資料${index + 1}`,
+                aspectRatio: 320 / 190,
               };
             }),
           );
@@ -504,6 +614,37 @@ async function buildAttachmentAssets(blocks) {
 
 function createPageTemplate() {
   return [];
+}
+
+function fitSizeWithinBox(aspectRatio, boxWidth, boxHeight) {
+  if (!Number.isFinite(aspectRatio) || aspectRatio <= 0) {
+    return {
+      width: boxWidth,
+      height: boxHeight,
+    };
+  }
+  const boxRatio = boxWidth / boxHeight;
+  if (aspectRatio > boxRatio) {
+    return {
+      width: boxWidth,
+      height: boxWidth / aspectRatio,
+    };
+  }
+  return {
+    width: boxHeight * aspectRatio,
+    height: boxHeight,
+  };
+}
+
+function thumbnailDrawGeometry(asset, scaleFactor) {
+  const fitted = fitSizeWithinBox(asset?.aspectRatio, THUMB_BASE_WIDTH_MM, THUMB_BASE_HEIGHT_MM);
+  const width = mmPrecise(fitted.width * scaleFactor);
+  const height = mmPrecise(fitted.height * scaleFactor);
+  return {
+    width,
+    height,
+    x: mmPrecise(THUMB_BASE_RIGHT_X - width),
+  };
 }
 
 function computeFooterLayout(issue, typography) {
@@ -542,8 +683,9 @@ function addContinuationMarker(page, typography) {
     typography.body.lineHeight.continuation,
     1,
   );
-  page.push(
-    createTextSchema({
+  pushTextSchema(
+    page,
+    {
       name: `continued-${page.length}`,
       x: 16,
       y: A4_HEIGHT_MM - 12,
@@ -554,15 +696,17 @@ function addContinuationMarker(page, typography) {
       fontName: BODY_BOLD_FONT_NAME,
       fontColor: COLOR_RED,
       lineHeight: typography.body.lineHeight.continuation,
-    }),
+    },
+    { halo: true },
   );
 }
 
 function addFinalPageFooter(page, issue, footerLayout, typography) {
   const noteText = normalizeText(issue.footer_note);
   if (noteText) {
-    page.push(
-      createTextSchema({
+    pushTextSchema(
+      page,
+      {
         name: `footer-note-${page.length}`,
         x: FOOTER_LEFT_X,
         y: footerLayout.footerTop + Math.max(0, footerLayout.contentHeight - footerLayout.noteHeight),
@@ -573,7 +717,8 @@ function addFinalPageFooter(page, issue, footerLayout, typography) {
         fontSize: typography.footer.note,
         lineHeight: typography.footer.lineHeight.note,
         fontColor: COLOR_RED,
-      }),
+      },
+      { halo: true },
     );
   }
 
@@ -586,8 +731,9 @@ function addFinalPageFooter(page, issue, footerLayout, typography) {
     footerLayout.footerTop + Math.max(0, footerLayout.contentHeight - footerLayout.contactHeight);
 
   FOOTER_CONTACT_LINES.forEach((line, index) => {
-    page.push(
-      createTextSchema({
+    pushTextSchema(
+      page,
+      {
         name: `footer-contact-${page.length}`,
         x: FOOTER_RIGHT_X,
         y: contactTop + lineHeightMm * index,
@@ -598,7 +744,8 @@ function addFinalPageFooter(page, issue, footerLayout, typography) {
         fontSize: typography.footer.contact,
         lineHeight: typography.footer.lineHeight.contact,
         alignment: "right",
-      }),
+      },
+      { halo: true },
     );
   });
 }
@@ -613,8 +760,9 @@ function addFirstPageHeader(page, issue, typography) {
     lineHeight: typography.title.lineHeight,
     fontFamily: TITLE_FONT_FAMILY,
   });
-  page.push(
-    createTextSchema({
+  pushTextSchema(
+    page,
+    {
       name: `title-${page.length}`,
       x: 12,
       y: 10,
@@ -624,13 +772,15 @@ function addFirstPageHeader(page, issue, typography) {
       fontName: TITLE_FONT_NAME,
       fontSize: typography.title.primary,
       lineHeight: typography.title.lineHeight,
-    }),
+    },
+    { halo: true },
   );
   let cursorY = 10 + Math.max(titleBlock.heightMm + 2.6, 14);
   if (!isNoMeeting) {
     const meetingHeight = textBlockHeightMm(typography.header.meeting, typography.header.lineHeight.meeting, 1);
-    page.push(
-      createTextSchema({
+    pushTextSchema(
+      page,
+      {
         name: `meeting-${page.length}`,
         x: 14,
         y: cursorY,
@@ -640,7 +790,8 @@ function addFirstPageHeader(page, issue, typography) {
         fontName: BODY_BOLD_FONT_NAME,
         fontSize: typography.header.meeting,
         lineHeight: typography.header.lineHeight.meeting,
-      }),
+      },
+      { halo: true },
     );
     cursorY += Math.max(meetingHeight + 1.4, 7);
   }
@@ -654,8 +805,9 @@ function addFirstPageHeader(page, issue, typography) {
       lineHeight: typography.header.lineHeight.note,
       fontFamily: BODY_FONT_FAMILY,
     });
-    page.push(
-      createTextSchema({
+    pushTextSchema(
+      page,
+      {
         name: `note-${page.length}`,
         x: noteX,
         y: cursorY,
@@ -666,15 +818,17 @@ function addFirstPageHeader(page, issue, typography) {
         fontName: BODY_BOLD_FONT_NAME,
         lineHeight: typography.header.lineHeight.note,
         fontColor: COLOR_RED,
-      }),
+      },
+      { halo: true },
     );
     cursorY += Math.max(noteBlock.heightMm + 1.8, 6.4);
   }
 
   if (!isNoMeeting) {
     const placeHeight = textBlockHeightMm(typography.header.place, typography.header.lineHeight.place, 1);
-    page.push(
-      createTextSchema({
+    pushTextSchema(
+      page,
+      {
         name: `place-${page.length}`,
         x: 14,
         y: cursorY,
@@ -683,7 +837,8 @@ function addFirstPageHeader(page, issue, typography) {
         content: `場所　${normalizeText(issue.place) || "未設定"}`,
         fontSize: typography.header.place,
         lineHeight: typography.header.lineHeight.place,
-      }),
+      },
+      { halo: true },
     );
     cursorY += Math.max(placeHeight + 1.8, 8.4);
   } else {
@@ -691,8 +846,9 @@ function addFirstPageHeader(page, issue, typography) {
   }
 
   const mainHeadingHeight = textBlockHeightMm(typography.h1.main, typography.h1.lineHeight.main, 1);
-  page.push(
-    createTextSchema({
+  pushTextSchema(
+    page,
+    {
       name: `main-heading-${page.length}`,
       x: 12,
       y: cursorY,
@@ -702,7 +858,8 @@ function addFirstPageHeader(page, issue, typography) {
       fontName: BODY_BOLD_FONT_NAME,
       fontSize: typography.h1.main,
       lineHeight: typography.h1.lineHeight.main,
-    }),
+    },
+    { halo: true },
   );
 
   return cursorY + Math.max(mainHeadingHeight + 2.2, 8);
@@ -716,8 +873,9 @@ function addContinuationHeader(page, issue, pageNumber, typography) {
     lineHeight: typography.title.lineHeight,
     fontFamily: TITLE_FONT_FAMILY,
   });
-  page.push(
-    createTextSchema({
+  pushTextSchema(
+    page,
+    {
       name: `continuation-title-${page.length}`,
       x: 12,
       y: 10,
@@ -727,7 +885,8 @@ function addContinuationHeader(page, issue, pageNumber, typography) {
       fontName: TITLE_FONT_NAME,
       fontSize: typography.title.continuation,
       lineHeight: typography.title.lineHeight,
-    }),
+    },
+    { halo: true },
   );
   return 10 + Math.max(titleBlock.heightMm + 3.2, 14);
 }
@@ -739,7 +898,10 @@ function itemMarker(index) {
 
 function normalizeItemRows(block) {
   if (Array.isArray(block.items) && block.items.length) {
-    return block.items;
+    return block.items.map((item) => ({
+      ...item,
+      thumb_scale_percent: normalizeItemThumbnailScalePercent(item.thumb_scale_percent),
+    }));
   }
   return [
     {
@@ -751,6 +913,7 @@ function normalizeItemRows(block) {
       note: "",
       supplements: [],
       meta_layout: ITEM_META_LAYOUT_STACKED,
+      thumb_scale_percent: ITEM_THUMBNAIL_SCALE_DEFAULT_PERCENT,
       sort_order: 1,
       attachments: [],
     },
@@ -846,7 +1009,9 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
         (metaBlock.heightMm ? metaBlock.heightMm + 0.8 : 0),
     ) + 1.1;
 
-  const sideHeight = assets.length ? assets.length * 16.6 + Math.max(0, assets.length - 1) * 2.6 : 0;
+  const sideHeight = assets.length
+    ? assets.length * THUMB_SLOT_HEIGHT_MM + Math.max(0, assets.length - 1) * THUMB_SLOT_GAP_MM
+    : 0;
   return {
     titleText,
     headingText: headingBlock,
@@ -861,8 +1026,9 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
 
 function addSectionHeading(page, block, index, rowTop, typography) {
   const { content, height } = computeSectionHeadingGeometry(block, index, typography);
-  page.push(
-    createTextSchema({
+  pushTextSchema(
+    page,
+    {
       name: `section-${page.length}`,
       x: 14,
       y: rowTop,
@@ -872,19 +1038,37 @@ function addSectionHeading(page, block, index, rowTop, typography) {
       fontName: BODY_BOLD_FONT_NAME,
       fontSize: typography.h1.section,
       lineHeight: typography.h1.lineHeight.section,
-    }),
+    },
+    { halo: true },
   );
   return height + 1.2;
 }
 
 function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
-  const sideX = 146;
   const headingX = 18;
+  const thumbScale = normalizeItemThumbnailScalePercent(item.thumb_scale_percent) / 100;
   const { titleText, headingText, bodyText, bodyLayout, supplementLayouts, metaText, metaHeight, rowHeight } =
     computeItemGeometry(item, assets, itemIndex, typography);
 
-  page.push(
-    createTextSchema({
+  const thumbnailSchemas = assets.map((asset, assetIndex) => {
+    const itemTop = rowTop + assetIndex * (THUMB_SLOT_HEIGHT_MM + THUMB_SLOT_GAP_MM);
+    const geometry = thumbnailDrawGeometry(asset, thumbScale);
+    return createImageSchema({
+      name: `thumb-${page.length}-bg-${assetIndex}`,
+      x: geometry.x,
+      y: itemTop,
+      width: geometry.width,
+      height: geometry.height,
+      content: asset.dataUrl,
+    });
+  });
+  if (thumbnailSchemas.length) {
+    page.unshift(...thumbnailSchemas);
+  }
+
+  pushTextSchema(
+    page,
+    {
       name: `item-heading-${page.length}`,
       x: headingX,
       y: rowTop,
@@ -894,13 +1078,15 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
       fontName: BODY_FONT_NAME,
       fontSize: typography.h2.item,
       lineHeight: typography.h2.lineHeight,
-    }),
+    },
+    { halo: true },
   );
 
   let cursorY = rowTop + Math.max(headingText.heightMm, 4.6) + 0.5;
   if (bodyLayout.heightMm) {
-    page.push(
-      createTextSchema({
+    pushTextSchema(
+      page,
+      {
         name: `item-body-${page.length}`,
         x: headingX,
         y: cursorY,
@@ -909,14 +1095,16 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
         content: bodyText,
         fontSize: typography.body.copy,
         lineHeight: typography.body.lineHeight.copy,
-      }),
+      },
+      { halo: true },
     );
     cursorY += bodyLayout.heightMm + 0.7;
   }
 
   supplementLayouts.forEach((supplement, supplementIndex) => {
-    page.push(
-      createTextSchema({
+    pushTextSchema(
+      page,
+      {
         name: `item-supplement-${page.length}`,
         x: headingX,
         y: cursorY,
@@ -927,14 +1115,16 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
         fontName: BODY_BOLD_FONT_NAME,
         lineHeight: typography.body.lineHeight.meta,
         fontColor: supplementColor(supplement.tone),
-      }),
+      },
+      { halo: true },
     );
     cursorY += supplement.heightMm + (supplementIndex === supplementLayouts.length - 1 ? 0.2 : 0.8);
   });
 
   if (metaText) {
-    page.push(
-      createTextSchema({
+    pushTextSchema(
+      page,
+      {
         name: `item-meta-${page.length}`,
         x: headingX,
         y: cursorY,
@@ -945,36 +1135,25 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
         fontName: BODY_BOLD_FONT_NAME,
         lineHeight: typography.body.lineHeight.meta,
         fontColor: COLOR_RED,
-      }),
+      },
+      { halo: true },
     );
   }
 
   assets.forEach((asset, assetIndex) => {
-    const itemTop = rowTop + assetIndex * 19.2;
-    page.push(
-      createImageSchema({
-        name: `thumb-${page.length}`,
-        x: sideX,
-        y: itemTop,
-        width: 22,
-        height: 13.2,
-        content: asset.dataUrl,
-      }),
-    );
-    page.push(
-      createTextSchema({
-        name: `thumb-label-${page.length}`,
-        x: sideX + 24.4,
-        y: itemTop + 0.3,
-        width: 24,
-        height: 11,
-        content: `【${labelForBlockKind(block.block_kind)}】\n対象者:${normalizeText(item.audience_label) || "全員"}`,
-        fontSize: typography.body.sideLabel,
-        fontName: BODY_BOLD_FONT_NAME,
-        lineHeight: typography.body.lineHeight.sideLabel,
-        fontColor: COLOR_RED,
-      }),
-    );
+    const itemTop = rowTop + assetIndex * (THUMB_SLOT_HEIGHT_MM + THUMB_SLOT_GAP_MM);
+    pushTextSchema(page, {
+      name: `thumb-label-${page.length}`,
+      x: THUMB_LABEL_X,
+      y: itemTop + 0.3,
+      width: THUMB_LABEL_WIDTH_MM,
+      height: 11,
+      content: `【${labelForBlockKind(block.block_kind)}】\n対象者:${normalizeText(item.audience_label) || "全員"}`,
+      fontSize: typography.body.sideLabel,
+      fontName: BODY_BOLD_FONT_NAME,
+      lineHeight: typography.body.lineHeight.sideLabel,
+      fontColor: COLOR_RED,
+    });
   });
 
   return rowHeight;
@@ -1066,6 +1245,31 @@ function buildPdfMonthPrefix(issue) {
   return "";
 }
 
+function validateTemplate(template) {
+  template.schemas.forEach((page, pageIndex) => {
+    page.forEach((schema, schemaIndex) => {
+      const values = {
+        x: schema?.position?.x,
+        y: schema?.position?.y,
+        width: schema?.width,
+        height: schema?.height,
+      };
+      const invalidKey = Object.entries(values).find(([, value]) => !Number.isFinite(value))?.[0];
+      if (!invalidKey) {
+        if (schema.position.y < BLANK_PAGE_PADDING_TOP_MM - 0.01) {
+          throw new Error(
+            `invalid schema ${schema?.name || `(page ${pageIndex + 1} schema ${schemaIndex + 1})`} field y: ${String(schema.position.y)} < top padding ${BLANK_PAGE_PADDING_TOP_MM}`,
+          );
+        }
+        return;
+      }
+      throw new Error(
+        `invalid schema ${schema?.name || `(page ${pageIndex + 1} schema ${schemaIndex + 1})`} field ${invalidKey}: ${String(values[invalidKey])}`,
+      );
+    });
+  });
+}
+
 function sanitizePdfFilePart(value, fallback) {
   const sanitized = normalizeText(value)
     .replace(/\s+/g, "-")
@@ -1086,6 +1290,7 @@ export function pdfFileName(issue) {
 export async function buildNoticePdfDocument(issue, blocks, fontScale = PAPER_FONT_SCALE_DEFAULTS) {
   const [font, attachmentAssets] = await Promise.all([loadFonts(), buildAttachmentAssets(blocks)]);
   const template = buildTemplate(issue, blocks, attachmentAssets, fontScale);
+  validateTemplate(template);
   const bytes = await generate({
     template,
     inputs: [{}],
