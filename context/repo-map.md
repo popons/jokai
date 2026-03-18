@@ -18,7 +18,7 @@
 |---|---|
 | `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、issue 一覧 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信。紙面フォントは `NotoSansJP-Regular.ttf` / `NotoSansJP-Bold.ttf` を配信し、preview rasterize は高DPI PNG を返す。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
 | `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替えを担当 |
-| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
+| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
 | `db/001_init.sql` | `issues` / `blocks` / `attachments` / `generated_files` 初期定義 |
 | `db/002_block_items.sql` | `block_items` 導入と添付の item 単位紐付け移行 |
@@ -76,7 +76,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 |---|---|
 | A4 縦固定 | `web-src/notice-pdf.js` の `A4_WIDTH_MM = 210`, `A4_HEIGHT_MM = 297` |
 | 左本文・右資料サムネ | 本文は概ね `x=14` 起点、右サムネ列は `addItemRow` の `sideX = 146` を基点に構成 |
-| item 補足行とメタの表示 | 補足行は `block_item_supplements` の入力順で本文直下に縦積みし、`block_items.meta_layout` は対象者/期限だけを `same_line` / `stacked` で制御する |
+| item 本文・補足行・メタの表示 | 本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。補足行は `block_item_supplements` の入力順で本文直下に縦積みし、`block_items.meta_layout` は対象者/期限だけを `same_line` / `stacked` で制御する |
 | プレビューと最終PDFの見た目を揃える | プレビューは同じ PDF bytes を rasterize して表示する |
 | 編集 chrome は過度に広げない | `masthead` / `editor-actions` / `card` / `asset-stage` は作業負荷を増やさない密度を保つ |
 | 最終ページ footer | 左下は issue ごとの任意赤字メッセージ、右下は固定必須の連絡先ブロック。footer 帯を予約して本文と衝突させない |

@@ -768,9 +768,17 @@ function buildItemMetaLines(item) {
   return lines;
 }
 
+function formatIndentedCopyText(value) {
+  return normalizeText(value)
+    .split("\n")
+    .map((line) => (line ? `　${line}` : ""))
+    .join("\n");
+}
+
 function buildItemSupplementLayouts(item, typography) {
   return normalizeItemSupplements(item).map((supplement) => {
-    const block = wrapText(supplement.content, {
+    const formattedContent = formatIndentedCopyText(supplement.content);
+    const block = wrapText(formattedContent, {
       widthMm: 110,
       fontSizePt: typography.body.meta,
       lineHeight: typography.body.lineHeight.meta,
@@ -778,6 +786,7 @@ function buildItemSupplementLayouts(item, typography) {
     });
     return {
       ...supplement,
+      formattedContent,
       heightMm: block.heightMm,
     };
   });
@@ -807,7 +816,8 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
     lineHeight: typography.h2.lineHeight,
     fontFamily: BODY_FONT_FAMILY,
   });
-  const bodyBlock = wrapText(item.body, {
+  const bodyText = formatIndentedCopyText(item.body);
+  const bodyBlock = wrapText(bodyText, {
     widthMm: 110,
     fontSizePt: typography.body.copy,
     lineHeight: typography.body.lineHeight.copy,
@@ -819,7 +829,7 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
       sum + supplement.heightMm + (index === supplementLayouts.length - 1 ? 0.2 : 0.8),
     0,
   );
-  const metaText = buildItemMetaLines(item).join("\n");
+  const metaText = formatIndentedCopyText(buildItemMetaLines(item).join("\n"));
   const metaBlock = wrapText(metaText, {
     widthMm: 110,
     fontSizePt: typography.body.meta,
@@ -840,7 +850,8 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
   return {
     titleText,
     headingText: headingBlock,
-    bodyText: bodyBlock,
+    bodyText,
+    bodyLayout: bodyBlock,
     supplementLayouts,
     metaText,
     metaHeight: metaBlock.heightMm,
@@ -869,7 +880,7 @@ function addSectionHeading(page, block, index, rowTop, typography) {
 function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
   const sideX = 146;
   const headingX = 18;
-  const { titleText, headingText, bodyText, supplementLayouts, metaText, metaHeight, rowHeight } =
+  const { titleText, headingText, bodyText, bodyLayout, supplementLayouts, metaText, metaHeight, rowHeight } =
     computeItemGeometry(item, assets, itemIndex, typography);
 
   page.push(
@@ -887,20 +898,20 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
   );
 
   let cursorY = rowTop + Math.max(headingText.heightMm, 4.6) + 0.5;
-  if (bodyText.heightMm) {
+  if (bodyLayout.heightMm) {
     page.push(
       createTextSchema({
         name: `item-body-${page.length}`,
         x: headingX,
         y: cursorY,
         width: 110,
-        height: bodyText.heightMm + 0.5,
-        content: normalizeText(item.body),
+        height: bodyLayout.heightMm + 0.5,
+        content: bodyText,
         fontSize: typography.body.copy,
         lineHeight: typography.body.lineHeight.copy,
       }),
     );
-    cursorY += bodyText.heightMm + 0.7;
+    cursorY += bodyLayout.heightMm + 0.7;
   }
 
   supplementLayouts.forEach((supplement, supplementIndex) => {
@@ -911,7 +922,7 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
         y: cursorY,
         width: 110,
         height: supplement.heightMm + 0.5,
-        content: supplement.content,
+        content: supplement.formattedContent,
         fontSize: typography.body.meta,
         fontName: BODY_BOLD_FONT_NAME,
         lineHeight: typography.body.lineHeight.meta,
