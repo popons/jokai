@@ -49,12 +49,21 @@ const FRONTEND_FONT_BODY: &str = "body.ttf";
 const FRONTEND_FONT_BODY_BOLD: &str = "body-bold.ttf";
 const FRONTEND_FONT_TITLE: &str = "title.ttf";
 const CURRENT_LAYOUT_VERSION: &str = "notice-pdf-layout-v2";
-const CURRENT_FONT_VERSION: &str = "noto-sans-jp-v1";
+const CURRENT_FONT_VERSION: &str = "noto-sans-jp-static-v2";
 const CURRENT_RENDERER_VERSION: &str = "pdfme-raster-v2";
+const NOTICE_PREVIEW_RENDER_DPI: u16 = 216;
 static EMBEDDED_FRONTEND_DIST: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/web-dist");
-static EMBEDDED_PAPER_FONT_BYTES: &[u8] = include_bytes!(concat!(
+static EMBEDDED_PAPER_FONT_BODY_BYTES: &[u8] = include_bytes!(concat!(
   env!("CARGO_MANIFEST_DIR"),
-  "/bundled-assets/fonts/NotoSansJP-VF.ttf"
+  "/bundled-assets/fonts/NotoSansJP-Regular.ttf"
+));
+static EMBEDDED_PAPER_FONT_BODY_BOLD_BYTES: &[u8] = include_bytes!(concat!(
+  env!("CARGO_MANIFEST_DIR"),
+  "/bundled-assets/fonts/NotoSansJP-Bold.ttf"
+));
+static EMBEDDED_PAPER_FONT_TITLE_BYTES: &[u8] = include_bytes!(concat!(
+  env!("CARGO_MANIFEST_DIR"),
+  "/bundled-assets/fonts/NotoSansJP-Bold.ttf"
 ));
 
 /* trait  ************************************************************************************************/
@@ -393,9 +402,9 @@ fn embedded_frontend_file(path: &str) -> Option<&'static include_dir::File<'stat
 
 fn bundled_font_bytes(file_name: &str) -> Result<&'static [u8]> {
   match file_name {
-    FRONTEND_FONT_BODY | FRONTEND_FONT_BODY_BOLD | FRONTEND_FONT_TITLE => {
-      Ok(EMBEDDED_PAPER_FONT_BYTES)
-    }
+    FRONTEND_FONT_BODY => Ok(EMBEDDED_PAPER_FONT_BODY_BYTES),
+    FRONTEND_FONT_BODY_BOLD => Ok(EMBEDDED_PAPER_FONT_BODY_BOLD_BYTES),
+    FRONTEND_FONT_TITLE => Ok(EMBEDDED_PAPER_FONT_TITLE_BYTES),
     _ => bail!("unknown frontend font `{file_name}`"),
   }
 }
@@ -1809,7 +1818,7 @@ async fn api_preview_rasterize(
     ProcessCommand::new(command)
       .arg("-png")
       .arg("-r")
-      .arg("144")
+      .arg(NOTICE_PREVIEW_RENDER_DPI.to_string())
       .arg(&input_pdf_for_task)
       .arg(&output_prefix_for_task)
       .status()

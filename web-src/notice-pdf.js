@@ -7,7 +7,7 @@ const A4_HEIGHT_MM = 297;
 const MM_TO_PX = 96 / 25.4;
 const PT_TO_PX = 96 / 72;
 const BODY_FONT_FAMILY = '"Yu Gothic", "Hiragino Sans", sans-serif';
-const TITLE_FONT_FAMILY = '"Yu Mincho", "Hiragino Mincho ProN", serif';
+const TITLE_FONT_FAMILY = '"Yu Gothic", "Hiragino Sans", sans-serif';
 const BODY_FONT_NAME = "JokaiBody";
 const BODY_BOLD_FONT_NAME = "JokaiBodyBold";
 const TITLE_FONT_NAME = "JokaiTitle";
@@ -15,7 +15,7 @@ const ITEM_META_LAYOUT_STACKED = "stacked";
 const ITEM_META_LAYOUT_SAME_LINE = "same_line";
 const ITEM_SUPPLEMENT_TONE_RED = "red";
 const ITEM_SUPPLEMENT_TONE_BLUE = "blue";
-const COLOR_BLACK = "#111111";
+const COLOR_BLACK = "#000000";
 const COLOR_RED = "#d0261a";
 const COLOR_BLUE = "#1f4fd8";
 const FOOTER_CONTACT_LINES = ["平古場生産組合", "組合長　古川 豊", "☎090-7581-7819"];
@@ -429,12 +429,14 @@ let fontPromise = null;
 
 async function loadFonts() {
   if (!fontPromise) {
-    fontPromise = fetch("/assets/fonts/body.ttf")
-      .then((response) => response.arrayBuffer())
-      .then((paperFont) => ({
-        [BODY_FONT_NAME]: { data: paperFont, fallback: true },
-        [BODY_BOLD_FONT_NAME]: { data: paperFont },
-        [TITLE_FONT_NAME]: { data: paperFont },
+    fontPromise = Promise.all([
+      fetch("/assets/fonts/body.ttf").then((response) => response.arrayBuffer()),
+      fetch("/assets/fonts/body-bold.ttf").then((response) => response.arrayBuffer()),
+      fetch("/assets/fonts/title.ttf").then((response) => response.arrayBuffer()),
+    ]).then(([bodyFont, bodyBoldFont, titleFont]) => ({
+      [BODY_FONT_NAME]: { data: bodyFont, fallback: true },
+      [BODY_BOLD_FONT_NAME]: { data: bodyBoldFont },
+      [TITLE_FONT_NAME]: { data: titleFont },
     }));
   }
 

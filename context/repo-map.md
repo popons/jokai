@@ -10,20 +10,20 @@
 | Primary invariant | 紙面見た目厳守。`docs/exmple.png` を視覚上の正解とする |
 | Editor chrome principle | 印刷プレビュー以外の UI は余白を絞り、header / action / form / attachment viewer を高密度に保つ |
 | Core stack | Rust/Axum, PostgreSQL, Vite, plain JavaScript, `pdfme` |
-| Runtime dependencies | `pdftoppm` はプレビュー画像生成と PDF 添付サムネ生成に必須。案内PDF本体は browser-side `pdfme` で生成し、frontend asset と紙面用フォントはバイナリへ埋め込んで配信する |
+| Runtime dependencies | `pdftoppm` はプレビュー画像生成と PDF 添付サムネ生成に必須。案内PDF本体は browser-side `pdfme` で生成し、frontend asset と紙面用フォントはバイナリへ埋め込んで配信する。紙面フォントは `NotoSansJP-VF.ttf` を生成元にしつつ、配信用には static instance を使う |
 
 ## Directory Map
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、issue 一覧 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
+| `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、issue 一覧 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信。紙面フォントは `NotoSansJP-Regular.ttf` / `NotoSansJP-Bold.ttf` を配信し、preview rasterize は高DPI PNG を返す。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
 | `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替えを担当 |
-| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する |
+| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
 | `db/001_init.sql` | `issues` / `blocks` / `attachments` / `generated_files` 初期定義 |
 | `db/002_block_items.sql` | `block_items` 導入と添付の item 単位紐付け移行 |
 | `db/003_embedded_assets_and_attachment_blobs.sql` | 添付原本の DB blob 化、thumbnail cache、publish version 列、legacy path 列への改名 |
-| `bundled-assets/fonts/` | 紙面/PDF 用にバイナリへ埋め込む固定フォントと license |
+| `bundled-assets/fonts/` | 紙面/PDF 用にバイナリへ埋め込む固定フォントと license。`NotoSansJP-VF.ttf` を生成元にし、配信用の `NotoSansJP-Regular.ttf` / `NotoSansJP-Bold.ttf` を持つ |
 | `docs/exmple.png` | 見本紙面の正本 |
 | `tests/version_flags.rs` | `--version` / `-V` の CLI テスト |
 | `build.rs` | ビルド時刻と埋め込み asset 再読込トリガを設定する |
@@ -56,7 +56,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 `web-src/notice-pdf.js` の `buildNoticePdfDocument(issue, blocks)`  
 -> ブラウザ内で notice PDF bytes を生成  
 -> `POST /api/preview-renders` に PDF を multipart 送信  
--> `src/main.rs` が `pdftoppm` で PNG 群へ変換  
+-> `src/main.rs` が `pdftoppm` で高DPI PNG 群へ変換  
 -> base64 data URL を `web-src/main.js` に返却  
 -> 編集画面の常時プレビューへ表示
 
