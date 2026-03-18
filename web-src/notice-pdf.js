@@ -11,6 +11,8 @@ const TITLE_FONT_FAMILY = '"Yu Mincho", "Hiragino Mincho ProN", serif';
 const BODY_FONT_NAME = "JokaiBody";
 const BODY_BOLD_FONT_NAME = "JokaiBodyBold";
 const TITLE_FONT_NAME = "JokaiTitle";
+const ITEM_META_LAYOUT_STACKED = "stacked";
+const ITEM_META_LAYOUT_SAME_LINE = "same_line";
 const COLOR_BLACK = "#111111";
 const COLOR_RED = "#d0261a";
 const FOOTER_CONTACT_LINES = ["平古場生産組合", "組合長　古川 豊", "☎090-7581-7819"];
@@ -170,6 +172,18 @@ function svgDataUrl(label, accent = "#c9c9c9") {
 
 function normalizeText(value) {
   return String(value ?? "").replace(/\r\n/g, "\n").trim();
+}
+
+function normalizeMetaValue(value) {
+  return normalizeText(value)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function normalizeItemMetaLayout(value) {
+  return value === ITEM_META_LAYOUT_SAME_LINE ? ITEM_META_LAYOUT_SAME_LINE : ITEM_META_LAYOUT_STACKED;
 }
 
 function dateLabel(value) {
@@ -695,10 +709,23 @@ function normalizeItemRows(block) {
       audience_label: "",
       due_date: "",
       note: "",
+      meta_layout: ITEM_META_LAYOUT_STACKED,
       sort_order: 1,
       attachments: [],
     },
   ];
+}
+
+function buildItemMetaLines(item) {
+  const lines = [
+    normalizeMetaValue(item.note),
+    normalizeMetaValue(item.audience_label) ? `対象者:${normalizeMetaValue(item.audience_label)}` : "",
+    item.due_date ? `期限:${dateLabel(item.due_date)}` : "",
+  ].filter(Boolean);
+  if (normalizeItemMetaLayout(item.meta_layout) === ITEM_META_LAYOUT_SAME_LINE) {
+    return lines.length ? [lines.join(" ")] : [];
+  }
+  return lines;
 }
 
 function computeSectionHeadingGeometry(block, index, typography) {
@@ -731,12 +758,7 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
     lineHeight: typography.body.lineHeight.copy,
     fontFamily: BODY_FONT_FAMILY,
   });
-  const metaParts = [
-    normalizeText(item.note),
-    normalizeText(item.audience_label) ? `対象者:${normalizeText(item.audience_label)}` : "",
-    item.due_date ? `期限:${dateLabel(item.due_date)}` : "",
-  ].filter(Boolean);
-  const metaText = metaParts.join(" ");
+  const metaText = buildItemMetaLines(item).join("\n");
   const metaBlock = wrapText(metaText, {
     widthMm: 110,
     fontSizePt: typography.body.meta,

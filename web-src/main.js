@@ -39,6 +39,10 @@ const paperFontScaleLabels = {
   body: "body",
   footer: "footer",
 };
+const itemMetaLayoutLabels = {
+  stacked: "別行",
+  same_line: "同じ行",
+};
 const paperFontScaleStorageKey = "jokai.paper-font-scale.v1";
 
 const state = {
@@ -113,6 +117,10 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function normalizeItemMetaLayout(value) {
+  return value === "same_line" ? "same_line" : "stacked";
+}
+
 function issueTypeOptions(selected) {
   return Object.entries(issueTypeLabels)
     .map(
@@ -127,6 +135,15 @@ function blockKindOptions(selected) {
     .map(
       ([value, label]) =>
         `<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`,
+    )
+    .join("");
+}
+
+function itemMetaLayoutOptions(selected) {
+  return Object.entries(itemMetaLayoutLabels)
+    .map(
+      ([value, label]) =>
+        `<option value="${value}" ${normalizeItemMetaLayout(selected) === value ? "selected" : ""}>${label}</option>`,
     )
     .join("");
 }
@@ -166,6 +183,7 @@ function normalizeItem(item = {}) {
     audience_label: item.audience_label || "",
     due_date: item.due_date || "",
     note: item.note || "",
+    meta_layout: normalizeItemMetaLayout(item.meta_layout),
     sort_order: item.sort_order || 0,
     attachments: Array.isArray(item.attachments) ? item.attachments.map(normalizeAttachment) : [],
   };
@@ -196,6 +214,7 @@ function initialItem() {
     audience_label: "",
     due_date: "",
     note: "",
+    meta_layout: "stacked",
     attachments: [],
   });
 }
@@ -252,6 +271,7 @@ function payloadFromState() {
         audience_label: item.audience_label,
         due_date: item.due_date,
         note: item.note,
+        meta_layout: normalizeItemMetaLayout(item.meta_layout),
       })),
     })),
   };
@@ -618,6 +638,13 @@ function renderItemCard(block, blockIndex, item, itemIndex) {
         <div class="field">
           <label>期限</label>
           <input data-item-field="due_date" data-block-index="${blockIndex}" data-item-index="${itemIndex}" type="date" value="${escapeHtml(item.due_date)}">
+        </div>
+        <div class="field field--wide">
+          <label>赤字表示</label>
+          <select data-item-field="meta_layout" data-block-index="${blockIndex}" data-item-index="${itemIndex}">
+            ${itemMetaLayoutOptions(item.meta_layout)}
+          </select>
+          <p class="field-hint">別行は赤字補足 → 対象者 → 期限 の順で縦積みします。</p>
         </div>
         <div class="field field--wide">
           <label>赤字補足</label>

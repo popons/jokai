@@ -114,6 +114,7 @@ pythonコマンドないので、python3コマンドを使ってね
 - 一覧画面の既存案内カード導線を触るときは、`web-src/main.js` の `renderIndex` と `src/main.rs` の `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/duplicate` をセットで確認すること。`published` の削除不可は UI と API の両方で守ること。
 - 編集画面の操作性を触るときは、`web-src/main.js` の DOM 構造と `web-src/app.css` の gap/padding/min-height を一緒に見ること。片方だけ触ると、また間延びする。
 - item 添付導線を触るときは、`web-src/main.js` のファイル選択・貼り付け・`Clipboardから追加` ボタンの 3 導線が同じ `POST /api/items/{id}/attachments` に収束している前提を崩さないこと。本文入力欄の通常貼り付けは横取りしないこと。
+- item の赤字補足・対象者・期限の紙面表示を触るときは、`web-src/main.js` の `meta_layout` UI、`web-src/notice-pdf.js` のメタ行生成、`src/main.rs` と `db/*.sql` の `block_items.meta_layout` をセットで確認すること。
 - 紙面/PDF 用フォントを触るときは、`bundled-assets/fonts/README.md`、`src/main.rs` の埋め込み配信、`web-src/notice-pdf.js` の `loadFonts()` をセットで確認すること。紙面側は Web フォント前提に戻さないこと。
 - プレビュー不一致を触るときは `web-src/main.js` と `src/main.rs` の `/api/preview-renders` をセットで確認すること。
 - 最終PDFの出力不具合を触るときは、まず `web-src/main.js` の `downloadNoticePdf` / `openPrintPageFromEditor` と `web-src/notice-pdf.js` を確認し、印刷 shell は `src/main.rs` の `/issues/{id}/print` を見ること。`/api/issues/{id}/print-pdf` は廃止メッセージを返す互換導線。

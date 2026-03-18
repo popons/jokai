@@ -193,6 +193,7 @@ struct IssueDocumentItem {
   audience_label: String,
   due_date: Option<String>,
   note: String,
+  meta_layout: String,
   sort_order: i32,
   attachments: Vec<IssueDocumentAttachment>,
 }
@@ -285,6 +286,8 @@ struct SaveItemPayload {
   due_date: String,
   #[serde(default)]
   note: String,
+  #[serde(default)]
+  meta_layout: String,
 }
 
 /* unsafe impl standard traits  **************************************************************************/
@@ -498,6 +501,17 @@ fn normalize_month_value(raw: &str) -> String {
     return format!("{trimmed}-01");
   }
   trimmed.to_string()
+}
+
+const ITEM_META_LAYOUT_STACKED: &str = "stacked";
+const ITEM_META_LAYOUT_SAME_LINE: &str = "same_line";
+
+fn normalize_item_meta_layout(raw: &str) -> &'static str {
+  if raw.trim() == ITEM_META_LAYOUT_SAME_LINE {
+    ITEM_META_LAYOUT_SAME_LINE
+  } else {
+    ITEM_META_LAYOUT_STACKED
+  }
 }
 
 fn attachment_display_kind(mime_type: &str) -> &'static str {
@@ -1263,6 +1277,7 @@ async fn fetch_issue_document(
          audience_label,
          to_char(due_date, 'YYYY-MM-DD'),
          note,
+         coalesce(meta_layout, 'stacked'),
          sort_order
        from block_items
        where block_id in (
@@ -1328,7 +1343,8 @@ async fn fetch_issue_document(
       audience_label: row.get::<_, String>(4),
       due_date: row.get::<_, Option<String>>(5),
       note: row.get::<_, String>(6),
-      sort_order: row.get::<_, i32>(7),
+      meta_layout: normalize_item_meta_layout(&row.get::<_, String>(7)).to_string(),
+      sort_order: row.get::<_, i32>(8),
       attachments: attachments_by_item.remove(&item_id).unwrap_or_default(),
     };
     items_by_block.entry(block_id).or_default().push(item);
@@ -1374,6 +1390,7 @@ async fn fetch_issue_document(
             audience_label: legacy_audience_label,
             due_date: legacy_due_date,
             note: legacy_note,
+            meta_layout: ITEM_META_LAYOUT_STACKED.to_string(),
             sort_order: 1,
             attachments,
           });
@@ -1977,6 +1994,7 @@ async fn api_issue_save(
       let item_audience_label = item.audience_label.trim().to_string();
       let item_due_date = item.due_date.trim().to_string();
       let item_note = item.note.trim().to_string();
+      let item_meta_layout = normalize_item_meta_layout(&item.meta_layout).to_string();
       let maybe_item_id = item
         .id
         .as_deref()
@@ -1994,8 +2012,9 @@ async fn api_issue_save(
                    body = $3,
                    audience_label = $4,
                    due_date = nullif($5, '')::date,
-                   note = $6
-               where id::text = $7 and block_id::text = $8",
+                   note = $6,
+                   meta_layout = $7
+               where id::text = $8 and block_id::text = $9",
               &[
                 &item_sort_order,
                 &item_heading,
@@ -2003,6 +2022,7 @@ async fn api_issue_save(
                 &item_audience_label,
                 &item_due_date,
                 &item_note,
+                &item_meta_layout,
                 &item_id,
                 &resolved_block_id,
               ],
@@ -2024,7 +2044,8 @@ async fn api_issue_save(
              body,
              audience_label,
              due_date,
-             note
+             note,
+             meta_layout
            )
            values (
              (select id from blocks where id::text = $1),
@@ -2033,7 +2054,8 @@ async fn api_issue_save(
              $4,
              $5,
              nullif($6, '')::date,
-             $7
+             $7,
+             $8
            )
            returning id::text",
           &[
@@ -2044,6 +2066,7 @@ async fn api_issue_save(
             &item_audience_label,
             &item_due_date,
             &item_note,
+            &item_meta_layout,
           ],
         )
         .await
@@ -2126,6 +2149,7 @@ async fn duplicate_issue_children(
          audience_label,
          to_char(due_date, 'YYYY-MM-DD'),
          note,
+         coalesce(meta_layout, 'stacked'),
          sort_order
        from block_items
        where block_id in (
@@ -2224,7 +2248,8 @@ async fn duplicate_issue_children(
            body,
            audience_label,
            due_date,
-           note
+           note,
+           meta_layout
          )
          values (
            (select id from blocks where id::text = $1),
@@ -2233,17 +2258,19 @@ async fn duplicate_issue_children(
            $4,
            $5,
            nullif($6, '')::date,
-           $7
+           $7,
+           $8
          )
          returning id::text",
         &[
           &duplicated_block_id,
-          &row.get::<_, i32>(7),
+          &row.get::<_, i32>(8),
           &row.get::<_, String>(2),
           &row.get::<_, String>(3),
           &row.get::<_, String>(4),
           &row.get::<_, Option<String>>(5).unwrap_or_default(),
           &row.get::<_, String>(6),
+          &normalize_item_meta_layout(&row.get::<_, String>(7)).to_string(),
         ],
       )
       .await

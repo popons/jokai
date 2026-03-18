@@ -231,3 +231,13 @@
 - 2026-03-19 00:03:13 +0900 [codified-context] `codified-context-maintenance` で routing 監査を実施し、`AGENTS.md` に紙面フォント導線と `bundled-assets/fonts/README.md` の Context Routing を追記。`context/repo-map.md` には `source_version` / `published_*_version` と起動時 legacy backfill を追記。
 - 2026-03-19 00:13:24 +0900 [単一バイナリ調整] `web` 実行から `--storage-dir` を除去し、runtime temp dir を `/tmp/jokai-runtime` 自動決定へ変更。legacy filesystem 添付の吸い上げは `db init` / `db migrate` の `--legacy-storage-dir` 明示時だけに分離し、`./watch-run-server.sh` 再起動後の起動行と `/api/meta` で確認。
 - 2026-03-19 00:16:53 +0900 [codified-context] 追加の `codified-context-maintenance` 監査を実施。変更差分は空、routing 監査でも `AGENTS.md` / `context/repo-map.md` は最新 source reality と整合しており、追加更新は不要と判断。
+- 2026-03-19 00:20:03 +0900 [調査] 作業開始。build-error.txt と test-error.txt を確認し、いずれも失敗なしを確認。対象者と期限の行分け要件について要件整理を開始。
+- 2026-03-19 00:20:28 +0900 [調査] `web-src/notice-pdf.js` を確認。対象者と期限は metaLines で同一列に連結されており、行分け設定の保存先は未実装と判断。
+- 2026-03-19 00:21:38 +0900 [要件整理] 対象者と期限の行分け要望について、論点を「設定単位」「既定値」「別行時の行組み定義」の3点に整理。プレビューと案内PDFは同一仕様で揃える前提で確認質問を返す方針。
+- 2026-03-19 00:23:22 +0900 [要件確定] 各itemごとに「対象者/期限表示」を切替可能にし、既定値は別行。別行時は「赤字補足→対象者→期限」の順で1要素1行の縦積みとする方針で要件確定。既存案内の見た目も新仕様へ揃える。
+- 2026-03-19 00:25:23 +0900 [実装準備] Go受領。itemごとの対象者/期限表示モード追加に向け、DB・Rust・frontend・pdfme の保存経路を再確認開始。
+- 2026-03-19 00:25:23 +0900 [実装] `block_items.meta_layout` 列追加、編集UIの表示形式select追加、pdfmeの赤字メタ行生成を同じ行/別行で切替可能にする差分を実装。
+- 2026-03-19 00:30:33 +0900 [検証] `npm run build` と `cargo fmt` を実行。1秒待機後に `build-error.txt`・`test-error.txt`・`clippy-error.txt` を確認し成功状態を維持、`build-error-win.txt` は未作成を確認。
+- 2026-03-19 00:35:24 +0900 [codified-context] `codified-context-maintenance` を implementation-followup として開始。対象は item ごとの対象者/期限表示モード追加に伴う AGENTS/context の追従確認と、完了後の git commit。
+- 2026-03-19 00:35:24 +0900 [codified-context] `AGENTS.md` に item 赤字メタ表示の確認ルートを追加し、`context/repo-map.md` に `block_items.meta_layout` の保存・組版事実を追記。新規長文docやskill追加は不要と判断。
+- 2026-03-19 00:36:34 +0900 [完了] item ごとの対象者/期限表示モード追加と codified-context 追随を完了。監視ログ成功を再確認し、これから関連差分をまとめて git commit する。
