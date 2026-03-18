@@ -17,8 +17,8 @@
 | Path | Role |
 |---|---|
 | `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、issue 一覧 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
-| `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、item 添付欄での Clipboard 画像登録、item ごとの赤字メタ表示モード (`meta_layout`) 編集 |
-| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの `meta_layout` に応じて赤字補足・対象者・期限を同一行または縦積みで組版する |
+| `web-src/main.js` | 一覧画面と編集画面の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替えを担当 |
+| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
 | `db/001_init.sql` | `issues` / `blocks` / `attachments` / `generated_files` 初期定義 |
 | `db/002_block_items.sql` | `block_items` 導入と添付の item 単位紐付け移行 |
@@ -43,7 +43,7 @@
 
 `GET /issues/{id}/edit`  
 -> `web-src/main.js` が issue / block / attachment を state に正規化  
--> item ごとの `meta_layout` も `block_items` から読み込み、`same_line` / `stacked` を payload へ含めて保存する  
+-> item ごとの補足行群を `block_item_supplements` から読み込み、`meta_layout` は対象者/期限の並びだけを `same_line` / `stacked` として payload へ含めて保存する  
 -> 入力変更時に save payload を構築  
 -> `PUT /api/issues/{id}` で保存し、`issues.source_version` を加算する
 
@@ -76,7 +76,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 |---|---|
 | A4 縦固定 | `web-src/notice-pdf.js` の `A4_WIDTH_MM = 210`, `A4_HEIGHT_MM = 297` |
 | 左本文・右資料サムネ | 本文は概ね `x=14` 起点、右サムネ列は `addItemRow` の `sideX = 146` を基点に構成 |
-| item 赤字メタの既定表示 | `block_items.meta_layout` の既定値は `stacked`。赤字補足 → 対象者 → 期限 の順で 1 要素 1 行に積む |
+| item 補足行とメタの表示 | 補足行は `block_item_supplements` の入力順で本文直下に縦積みし、`block_items.meta_layout` は対象者/期限だけを `same_line` / `stacked` で制御する |
 | プレビューと最終PDFの見た目を揃える | プレビューは同じ PDF bytes を rasterize して表示する |
 | 編集 chrome は過度に広げない | `masthead` / `editor-actions` / `card` / `asset-stage` は作業負荷を増やさない密度を保つ |
 | 最終ページ footer | 左下は issue ごとの任意赤字メッセージ、右下は固定必須の連絡先ブロック。footer 帯を予約して本文と衝突させない |
@@ -91,7 +91,8 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 | `issues` | 案内全体 | `issue_type`, `status`, `meeting_date`, `place`, `header_note`, 最終ページ左下用 `footer_note` などを保持 |
 | `issues.source_version` / `published_*_version` | 再現用 version 刻印 | save ごとに `source_version` が増え、`published` 遷移時は source/layout/font/renderer の version を固定化する |
 | `blocks` | セクション単位 | `agenda` / `submission` / `distribution` / `info` / `freeform` |
-| `block_items` | 各ブロック内の箇条項目 | `db/002_block_items.sql` で導入。旧 `blocks.body` 系からの移行先。`meta_layout` が赤字補足・対象者・期限の紙面表示を `same_line` / `stacked` で保持する |
+| `block_items` | 各ブロック内の箇条項目 | `db/002_block_items.sql` で導入。旧 `blocks.body` 系からの移行先。`meta_layout` は対象者/期限の紙面表示だけを `same_line` / `stacked` で保持する |
+| `block_item_supplements` | item ごとの補足行 | `db/005_block_item_supplements.sql` で導入。赤/青の補足行を複数保持し、旧 `block_items.note` は初回 migration 時に先頭の赤補足へ吸い上げる |
 | `attachments` | 添付メタデータ | `item_id` 単位で紐付け。原本/サムネ本体ではなく filename・mime・legacy path・紙面補助メタを持つ |
 | `attachment_original_contents` | 添付原本の正本 | `bytea` で原本 bytes を保持する。新規 upload はここが正本 |
 | `attachment_thumbnail_caches` | 添付サムネ cache | 画像添付は原本流用、PDF 添付は `pdftoppm` で 1 ページ目 PNG を生成して cache する |

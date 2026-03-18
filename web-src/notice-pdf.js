@@ -13,8 +13,11 @@ const BODY_BOLD_FONT_NAME = "JokaiBodyBold";
 const TITLE_FONT_NAME = "JokaiTitle";
 const ITEM_META_LAYOUT_STACKED = "stacked";
 const ITEM_META_LAYOUT_SAME_LINE = "same_line";
+const ITEM_SUPPLEMENT_TONE_RED = "red";
+const ITEM_SUPPLEMENT_TONE_BLUE = "blue";
 const COLOR_BLACK = "#111111";
 const COLOR_RED = "#d0261a";
+const COLOR_BLUE = "#1f4fd8";
 const FOOTER_CONTACT_LINES = ["平古場生産組合", "組合長　古川 豊", "☎090-7581-7819"];
 const FOOTER_GAP_ABOVE_MM = 4.5;
 const BLANK_PAGE_PADDING_BOTTOM_MM = Array.isArray(BLANK_A4_PDF.padding)
@@ -184,6 +187,41 @@ function normalizeMetaValue(value) {
 
 function normalizeItemMetaLayout(value) {
   return value === ITEM_META_LAYOUT_SAME_LINE ? ITEM_META_LAYOUT_SAME_LINE : ITEM_META_LAYOUT_STACKED;
+}
+
+function normalizeItemSupplementTone(value) {
+  return value === ITEM_SUPPLEMENT_TONE_BLUE ? ITEM_SUPPLEMENT_TONE_BLUE : ITEM_SUPPLEMENT_TONE_RED;
+}
+
+function normalizeItemSupplements(item) {
+  if (Array.isArray(item.supplements) && item.supplements.length) {
+    return item.supplements
+      .map((supplement, index) => ({
+        id: supplement.id || "",
+        tone: normalizeItemSupplementTone(supplement.tone),
+        content: normalizeText(supplement.content),
+        sort_order: supplement.sort_order || index + 1,
+      }))
+      .filter((supplement) => supplement.content);
+  }
+
+  const legacyNote = normalizeText(item.note);
+  if (!legacyNote) {
+    return [];
+  }
+
+  return [
+    {
+      id: "",
+      tone: ITEM_SUPPLEMENT_TONE_RED,
+      content: legacyNote,
+      sort_order: 1,
+    },
+  ];
+}
+
+function supplementColor(tone) {
+  return normalizeItemSupplementTone(tone) === ITEM_SUPPLEMENT_TONE_BLUE ? COLOR_BLUE : COLOR_RED;
 }
 
 function dateLabel(value) {
@@ -709,6 +747,7 @@ function normalizeItemRows(block) {
       audience_label: "",
       due_date: "",
       note: "",
+      supplements: [],
       meta_layout: ITEM_META_LAYOUT_STACKED,
       sort_order: 1,
       attachments: [],
@@ -718,7 +757,6 @@ function normalizeItemRows(block) {
 
 function buildItemMetaLines(item) {
   const lines = [
-    normalizeMetaValue(item.note),
     normalizeMetaValue(item.audience_label) ? `対象者:${normalizeMetaValue(item.audience_label)}` : "",
     item.due_date ? `期限:${dateLabel(item.due_date)}` : "",
   ].filter(Boolean);
@@ -726,6 +764,21 @@ function buildItemMetaLines(item) {
     return lines.length ? [lines.join(" ")] : [];
   }
   return lines;
+}
+
+function buildItemSupplementLayouts(item, typography) {
+  return normalizeItemSupplements(item).map((supplement) => {
+    const block = wrapText(supplement.content, {
+      widthMm: 110,
+      fontSizePt: typography.body.meta,
+      lineHeight: typography.body.lineHeight.meta,
+      fontFamily: BODY_FONT_FAMILY,
+    });
+    return {
+      ...supplement,
+      heightMm: block.heightMm,
+    };
+  });
 }
 
 function computeSectionHeadingGeometry(block, index, typography) {
@@ -758,6 +811,12 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
     lineHeight: typography.body.lineHeight.copy,
     fontFamily: BODY_FONT_FAMILY,
   });
+  const supplementLayouts = buildItemSupplementLayouts(item, typography);
+  const supplementHeight = supplementLayouts.reduce(
+    (sum, supplement, index) =>
+      sum + supplement.heightMm + (index === supplementLayouts.length - 1 ? 0.2 : 0.8),
+    0,
+  );
   const metaText = buildItemMetaLines(item).join("\n");
   const metaBlock = wrapText(metaText, {
     widthMm: 110,
@@ -771,6 +830,7 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
       4.8,
       headingBlock.heightMm +
         (bodyBlock.heightMm ? bodyBlock.heightMm + 1.1 : 0) +
+        (supplementHeight ? supplementHeight + 0.8 : 0) +
         (metaBlock.heightMm ? metaBlock.heightMm + 0.8 : 0),
     ) + 1.1;
 
@@ -779,6 +839,7 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
     titleText,
     headingText: headingBlock,
     bodyText: bodyBlock,
+    supplementLayouts,
     metaText,
     metaHeight: metaBlock.heightMm,
     rowHeight: Math.max(mainHeight, sideHeight, 8.4),
@@ -806,7 +867,7 @@ function addSectionHeading(page, block, index, rowTop, typography) {
 function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
   const sideX = 146;
   const headingX = 18;
-  const { titleText, headingText, bodyText, metaText, metaHeight, rowHeight } =
+  const { titleText, headingText, bodyText, supplementLayouts, metaText, metaHeight, rowHeight } =
     computeItemGeometry(item, assets, itemIndex, typography);
 
   page.push(
@@ -839,6 +900,24 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
     );
     cursorY += bodyText.heightMm + 0.7;
   }
+
+  supplementLayouts.forEach((supplement, supplementIndex) => {
+    page.push(
+      createTextSchema({
+        name: `item-supplement-${page.length}`,
+        x: headingX,
+        y: cursorY,
+        width: 110,
+        height: supplement.heightMm + 0.5,
+        content: supplement.content,
+        fontSize: typography.body.meta,
+        fontName: BODY_BOLD_FONT_NAME,
+        lineHeight: typography.body.lineHeight.meta,
+        fontColor: supplementColor(supplement.tone),
+      }),
+    );
+    cursorY += supplement.heightMm + (supplementIndex === supplementLayouts.length - 1 ? 0.2 : 0.8);
+  });
 
   if (metaText) {
     page.push(

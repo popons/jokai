@@ -574,6 +574,14 @@ button {
   background: rgba(255, 255, 255, 0.96);
 }
 
+.field-header,
+.supplement-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
 .item-index {
   color: var(--muted);
   font-size: 0.9rem;
@@ -587,6 +595,41 @@ button {
 .attachment-block {
   display: grid;
   gap: 6px;
+}
+
+.supplement-stack {
+  display: grid;
+  gap: 6px;
+}
+
+.supplement-row {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(245, 248, 253, 0.92);
+  border: 1px solid rgba(129, 146, 177, 0.18);
+}
+
+.supplement-index {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.supplement-inputs {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+.supplement-inputs textarea {
+  min-height: 68px;
+}
+
+.empty-state--compact {
+  padding: 10px 12px;
+  min-height: 0;
 }
 
 .attachment-input-grid {

@@ -193,9 +193,18 @@ struct IssueDocumentItem {
   audience_label: String,
   due_date: Option<String>,
   note: String,
+  supplements: Vec<IssueDocumentItemSupplement>,
   meta_layout: String,
   sort_order: i32,
   attachments: Vec<IssueDocumentAttachment>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssueDocumentItemSupplement {
+  id: String,
+  tone: String,
+  content: String,
+  sort_order: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -287,7 +296,23 @@ struct SaveItemPayload {
   #[serde(default)]
   note: String,
   #[serde(default)]
+  supplements: Vec<SaveItemSupplementPayload>,
+  #[serde(default)]
   meta_layout: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SaveItemSupplementPayload {
+  #[serde(default)]
+  tone: String,
+  #[serde(default)]
+  content: String,
+}
+
+#[derive(Debug, Clone)]
+struct NormalizedItemSupplement {
+  tone: String,
+  content: String,
 }
 
 /* unsafe impl standard traits  **************************************************************************/
@@ -505,6 +530,8 @@ fn normalize_month_value(raw: &str) -> String {
 
 const ITEM_META_LAYOUT_STACKED: &str = "stacked";
 const ITEM_META_LAYOUT_SAME_LINE: &str = "same_line";
+const ITEM_SUPPLEMENT_TONE_RED: &str = "red";
+const ITEM_SUPPLEMENT_TONE_BLUE: &str = "blue";
 
 fn normalize_item_meta_layout(raw: &str) -> &'static str {
   if raw.trim() == ITEM_META_LAYOUT_SAME_LINE {
@@ -512,6 +539,94 @@ fn normalize_item_meta_layout(raw: &str) -> &'static str {
   } else {
     ITEM_META_LAYOUT_STACKED
   }
+}
+
+fn normalize_item_supplement_tone(raw: &str) -> &'static str {
+  if raw.trim() == ITEM_SUPPLEMENT_TONE_BLUE {
+    ITEM_SUPPLEMENT_TONE_BLUE
+  } else {
+    ITEM_SUPPLEMENT_TONE_RED
+  }
+}
+
+fn legacy_item_supplements(note: &str) -> Vec<IssueDocumentItemSupplement> {
+  let content = note.trim();
+  if content.is_empty() {
+    return Vec::new();
+  }
+
+  vec![IssueDocumentItemSupplement {
+    id: String::new(),
+    tone: ITEM_SUPPLEMENT_TONE_RED.to_string(),
+    content: content.to_string(),
+    sort_order: 1,
+  }]
+}
+
+fn legacy_note_from_supplements(supplements: &[IssueDocumentItemSupplement]) -> String {
+  supplements
+    .iter()
+    .find(|supplement| supplement.tone == ITEM_SUPPLEMENT_TONE_RED)
+    .map(|supplement| supplement.content.clone())
+    .unwrap_or_default()
+}
+
+fn normalize_save_item_supplements(
+  supplements: &[SaveItemSupplementPayload],
+  legacy_note: &str,
+) -> Vec<NormalizedItemSupplement> {
+  let mut normalized = supplements
+    .iter()
+    .filter_map(|supplement| {
+      let content = supplement.content.trim();
+      if content.is_empty() {
+        return None;
+      }
+
+      Some(NormalizedItemSupplement {
+        tone: normalize_item_supplement_tone(&supplement.tone).to_string(),
+        content: content.to_string(),
+      })
+    })
+    .collect::<Vec<_>>();
+
+  if normalized.is_empty() {
+    let legacy_note = legacy_note.trim();
+    if !legacy_note.is_empty() {
+      normalized.push(NormalizedItemSupplement {
+        tone: ITEM_SUPPLEMENT_TONE_RED.to_string(),
+        content: legacy_note.to_string(),
+      });
+    }
+  }
+
+  normalized
+}
+
+async fn replace_item_supplements(
+  client: &Client,
+  item_id: &str,
+  supplements: &[NormalizedItemSupplement],
+) -> std::result::Result<(), tokio_postgres::Error> {
+  client
+    .execute(
+      "delete from block_item_supplements where item_id::text = $1",
+      &[&item_id],
+    )
+    .await?;
+
+  for (index, supplement) in supplements.iter().enumerate() {
+    let sort_order = index as i32 + 1;
+    client
+      .execute(
+        "insert into block_item_supplements (item_id, sort_order, tone, content)
+         values ((select id from block_items where id::text = $1), $2, $3, $4)",
+        &[&item_id, &sort_order, &supplement.tone, &supplement.content],
+      )
+      .await?;
+  }
+
+  Ok(())
 }
 
 fn attachment_display_kind(mime_type: &str) -> &'static str {
@@ -1290,6 +1405,29 @@ async fn fetch_issue_document(
     )
     .await?;
 
+  let supplement_rows = client
+    .query(
+      "select
+         id::text,
+         item_id::text,
+         tone,
+         content,
+         sort_order
+       from block_item_supplements
+       where item_id in (
+         select id
+         from block_items
+         where block_id in (
+           select id
+           from blocks
+           where issue_id::text = $1
+         )
+       )
+       order by item_id asc, sort_order asc, created_at asc",
+      &[&issue_id],
+    )
+    .await?;
+
   let attachment_rows = client
     .query(
       "select
@@ -1304,6 +1442,20 @@ async fn fetch_issue_document(
       &[&issue_id],
     )
     .await?;
+
+  let mut supplements_by_item = BTreeMap::<String, Vec<IssueDocumentItemSupplement>>::new();
+  for row in supplement_rows {
+    let item_id = row.get::<_, String>(1);
+    supplements_by_item
+      .entry(item_id)
+      .or_default()
+      .push(IssueDocumentItemSupplement {
+        id: row.get::<_, String>(0),
+        tone: normalize_item_supplement_tone(&row.get::<_, String>(2)).to_string(),
+        content: row.get::<_, String>(3),
+        sort_order: row.get::<_, i32>(4),
+      });
+  }
 
   let mut attachments_by_item = BTreeMap::<String, Vec<IssueDocumentAttachment>>::new();
   let mut legacy_attachments_by_block = BTreeMap::<String, Vec<IssueDocumentAttachment>>::new();
@@ -1336,13 +1488,19 @@ async fn fetch_issue_document(
   for row in item_rows {
     let item_id = row.get::<_, String>(0);
     let block_id = row.get::<_, String>(1);
+    let legacy_note = row.get::<_, String>(6);
+    let supplements = supplements_by_item
+      .remove(&item_id)
+      .filter(|values| !values.is_empty())
+      .unwrap_or_else(|| legacy_item_supplements(&legacy_note));
     let item = IssueDocumentItem {
       id: item_id.clone(),
       heading: row.get::<_, String>(2),
       body: row.get::<_, String>(3),
       audience_label: row.get::<_, String>(4),
       due_date: row.get::<_, Option<String>>(5),
-      note: row.get::<_, String>(6),
+      note: legacy_note_from_supplements(&supplements),
+      supplements,
       meta_layout: normalize_item_meta_layout(&row.get::<_, String>(7)).to_string(),
       sort_order: row.get::<_, i32>(8),
       attachments: attachments_by_item.remove(&item_id).unwrap_or_default(),
@@ -1374,6 +1532,7 @@ async fn fetch_issue_document(
         let legacy_audience_label = row.get::<_, String>(4);
         let legacy_due_date = row.get::<_, Option<String>>(5);
         let legacy_note = row.get::<_, String>(6);
+        let supplements = legacy_item_supplements(&legacy_note);
         let attachments = legacy_attachments_by_block
           .remove(&block_id)
           .unwrap_or_default();
@@ -1389,7 +1548,8 @@ async fn fetch_issue_document(
             body: legacy_body,
             audience_label: legacy_audience_label,
             due_date: legacy_due_date,
-            note: legacy_note,
+            note: legacy_note_from_supplements(&supplements),
+            supplements,
             meta_layout: ITEM_META_LAYOUT_STACKED.to_string(),
             sort_order: 1,
             attachments,
@@ -1993,7 +2153,7 @@ async fn api_issue_save(
       let item_body = item.body.trim().to_string();
       let item_audience_label = item.audience_label.trim().to_string();
       let item_due_date = item.due_date.trim().to_string();
-      let item_note = item.note.trim().to_string();
+      let item_supplements = normalize_save_item_supplements(&item.supplements, &item.note);
       let item_meta_layout = normalize_item_meta_layout(&item.meta_layout).to_string();
       let maybe_item_id = item
         .id
@@ -2001,7 +2161,7 @@ async fn api_issue_save(
         .map(str::trim)
         .filter(|id| !id.is_empty());
 
-      if let Some(item_id) = maybe_item_id {
+      let resolved_item_id = if let Some(item_id) = maybe_item_id {
         if existing_item_ids.contains(item_id) {
           state
             .client
@@ -2012,16 +2172,15 @@ async fn api_issue_save(
                    body = $3,
                    audience_label = $4,
                    due_date = nullif($5, '')::date,
-                   note = $6,
-                   meta_layout = $7
-               where id::text = $8 and block_id::text = $9",
+                   note = '',
+                   meta_layout = $6
+               where id::text = $7 and block_id::text = $8",
               &[
                 &item_sort_order,
                 &item_heading,
                 &item_body,
                 &item_audience_label,
                 &item_due_date,
-                &item_note,
                 &item_meta_layout,
                 &item_id,
                 &resolved_block_id,
@@ -2030,48 +2189,93 @@ async fn api_issue_save(
             .await
             .map_err(|err| api_internal(err.to_string()))?;
           retained_item_ids.insert(item_id.to_string());
-          continue;
+          item_id.to_string()
+        } else {
+          let inserted_item = state
+            .client
+            .query_one(
+              "insert into block_items (
+                 block_id,
+                 sort_order,
+                 heading,
+                 body,
+                 audience_label,
+                 due_date,
+                 note,
+                 meta_layout
+               )
+               values (
+                 (select id from blocks where id::text = $1),
+                 $2,
+                 $3,
+                 $4,
+                 $5,
+                 nullif($6, '')::date,
+                 '',
+                 $7
+               )
+               returning id::text",
+              &[
+                &resolved_block_id,
+                &item_sort_order,
+                &item_heading,
+                &item_body,
+                &item_audience_label,
+                &item_due_date,
+                &item_meta_layout,
+              ],
+            )
+            .await
+            .map_err(|err| api_internal(err.to_string()))?;
+          let inserted_id = inserted_item.get::<_, String>(0);
+          retained_item_ids.insert(inserted_id.clone());
+          inserted_id
         }
-      }
+      } else {
+        let inserted_item = state
+          .client
+          .query_one(
+            "insert into block_items (
+               block_id,
+               sort_order,
+               heading,
+               body,
+               audience_label,
+               due_date,
+               note,
+               meta_layout
+             )
+             values (
+               (select id from blocks where id::text = $1),
+               $2,
+               $3,
+               $4,
+               $5,
+               nullif($6, '')::date,
+               '',
+               $7
+             )
+             returning id::text",
+            &[
+              &resolved_block_id,
+              &item_sort_order,
+              &item_heading,
+              &item_body,
+              &item_audience_label,
+              &item_due_date,
+              &item_meta_layout,
+            ],
+          )
+          .await
+          .map_err(|err| api_internal(err.to_string()))?;
+        let inserted_id = inserted_item.get::<_, String>(0);
+        retained_item_ids.insert(inserted_id.clone());
+        inserted_id
+      };
 
-      let inserted_item = state
-        .client
-        .query_one(
-          "insert into block_items (
-             block_id,
-             sort_order,
-             heading,
-             body,
-             audience_label,
-             due_date,
-             note,
-             meta_layout
-           )
-           values (
-             (select id from blocks where id::text = $1),
-             $2,
-             $3,
-             $4,
-             $5,
-             nullif($6, '')::date,
-             $7,
-             $8
-           )
-           returning id::text",
-          &[
-            &resolved_block_id,
-            &item_sort_order,
-            &item_heading,
-            &item_body,
-            &item_audience_label,
-            &item_due_date,
-            &item_note,
-            &item_meta_layout,
-          ],
-        )
+      replace_item_supplements(&state.client, &resolved_item_id, &item_supplements)
         .await
         .map_err(|err| api_internal(err.to_string()))?;
-      retained_item_ids.insert(inserted_item.get::<_, String>(0));
     }
 
     for existing_item_id in existing_item_ids {
@@ -2163,6 +2367,31 @@ async fn duplicate_issue_children(
     .await
     .map_err(|err| api_internal(err.to_string()))?;
 
+  let supplement_rows = state
+    .client
+    .query(
+      "select
+         id::text,
+         item_id::text,
+         tone,
+         content,
+         sort_order
+       from block_item_supplements
+       where item_id in (
+         select id
+         from block_items
+         where block_id in (
+           select id
+           from blocks
+           where issue_id::text = $1
+         )
+       )
+       order by item_id asc, sort_order asc, created_at asc",
+      &[&source_issue_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
   let attachment_rows = state
     .client
     .query(
@@ -2185,6 +2414,20 @@ async fn duplicate_issue_children(
     )
     .await
     .map_err(|err| api_internal(err.to_string()))?;
+
+  let mut supplements_by_item = BTreeMap::<String, Vec<IssueDocumentItemSupplement>>::new();
+  for row in supplement_rows {
+    let item_id = row.get::<_, String>(1);
+    supplements_by_item
+      .entry(item_id)
+      .or_default()
+      .push(IssueDocumentItemSupplement {
+        id: row.get::<_, String>(0),
+        tone: normalize_item_supplement_tone(&row.get::<_, String>(2)).to_string(),
+        content: row.get::<_, String>(3),
+        sort_order: row.get::<_, i32>(4),
+      });
+  }
 
   let mut duplicated_block_ids = BTreeMap::<String, String>::new();
   for row in block_rows {
@@ -2233,6 +2476,7 @@ async fn duplicate_issue_children(
   for row in item_rows {
     let source_item_id = row.get::<_, String>(0);
     let source_block_id = row.get::<_, String>(1);
+    let legacy_note = row.get::<_, String>(6);
     let duplicated_block_id = duplicated_block_ids
       .get(&source_block_id)
       .cloned()
@@ -2258,8 +2502,8 @@ async fn duplicate_issue_children(
            $4,
            $5,
            nullif($6, '')::date,
-           $7,
-           $8
+           '',
+           $7
          )
          returning id::text",
         &[
@@ -2269,13 +2513,35 @@ async fn duplicate_issue_children(
           &row.get::<_, String>(3),
           &row.get::<_, String>(4),
           &row.get::<_, Option<String>>(5).unwrap_or_default(),
-          &row.get::<_, String>(6),
           &normalize_item_meta_layout(&row.get::<_, String>(7)).to_string(),
         ],
       )
       .await
       .map_err(|err| api_internal(err.to_string()))?;
-    duplicated_item_ids.insert(source_item_id, duplicated_item_row.get::<_, String>(0));
+    let duplicated_item_id = duplicated_item_row.get::<_, String>(0);
+    duplicated_item_ids.insert(source_item_id.clone(), duplicated_item_id.clone());
+
+    let supplements = supplements_by_item
+      .remove(&source_item_id)
+      .filter(|values| !values.is_empty())
+      .unwrap_or_else(|| legacy_item_supplements(&legacy_note));
+    for (supplement_index, supplement) in supplements.iter().enumerate() {
+      let sort_order = supplement_index as i32 + 1;
+      state
+        .client
+        .execute(
+          "insert into block_item_supplements (item_id, sort_order, tone, content)
+           values ((select id from block_items where id::text = $1), $2, $3, $4)",
+          &[
+            &duplicated_item_id,
+            &sort_order,
+            &normalize_item_supplement_tone(&supplement.tone).to_string(),
+            &supplement.content,
+          ],
+        )
+        .await
+        .map_err(|err| api_internal(err.to_string()))?;
+    }
   }
 
   for row in attachment_rows {

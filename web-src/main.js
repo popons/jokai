@@ -43,6 +43,10 @@ const itemMetaLayoutLabels = {
   stacked: "別行",
   same_line: "同じ行",
 };
+const itemSupplementToneLabels = {
+  red: "赤",
+  blue: "青",
+};
 const paperFontScaleStorageKey = "jokai.paper-font-scale.v1";
 
 const state = {
@@ -121,6 +125,10 @@ function normalizeItemMetaLayout(value) {
   return value === "same_line" ? "same_line" : "stacked";
 }
 
+function normalizeItemSupplementTone(value) {
+  return value === "blue" ? "blue" : "red";
+}
+
 function issueTypeOptions(selected) {
   return Object.entries(issueTypeLabels)
     .map(
@@ -144,6 +152,15 @@ function itemMetaLayoutOptions(selected) {
     .map(
       ([value, label]) =>
         `<option value="${value}" ${normalizeItemMetaLayout(selected) === value ? "selected" : ""}>${label}</option>`,
+    )
+    .join("");
+}
+
+function itemSupplementToneOptions(selected) {
+  return Object.entries(itemSupplementToneLabels)
+    .map(
+      ([value, label]) =>
+        `<option value="${value}" ${normalizeItemSupplementTone(selected) === value ? "selected" : ""}>${label}</option>`,
     )
     .join("");
 }
@@ -175,14 +192,31 @@ function normalizeAttachment(attachment = {}) {
   };
 }
 
+function normalizeItemSupplement(supplement = {}) {
+  return {
+    id: supplement.id || "",
+    tone: normalizeItemSupplementTone(supplement.tone),
+    content: supplement.content || "",
+    sort_order: supplement.sort_order || 0,
+  };
+}
+
 function normalizeItem(item = {}) {
+  const normalizedSupplements = Array.isArray(item.supplements)
+    ? item.supplements.map(normalizeItemSupplement)
+    : [];
+  const supplements = normalizedSupplements.length
+    ? normalizedSupplements
+    : item.note
+      ? [normalizeItemSupplement({ tone: "red", content: item.note, sort_order: 1 })]
+      : [];
   return {
     id: item.id || "",
     heading: item.heading || "",
     body: item.body || "",
     audience_label: item.audience_label || "",
     due_date: item.due_date || "",
-    note: item.note || "",
+    supplements,
     meta_layout: normalizeItemMetaLayout(item.meta_layout),
     sort_order: item.sort_order || 0,
     attachments: Array.isArray(item.attachments) ? item.attachments.map(normalizeAttachment) : [],
@@ -213,9 +247,16 @@ function initialItem() {
     body: "",
     audience_label: "",
     due_date: "",
-    note: "",
+    supplements: [],
     meta_layout: "stacked",
     attachments: [],
+  });
+}
+
+function initialItemSupplement(tone = "red") {
+  return normalizeItemSupplement({
+    tone,
+    content: "",
   });
 }
 
@@ -270,7 +311,10 @@ function payloadFromState() {
         body: item.body,
         audience_label: item.audience_label,
         due_date: item.due_date,
-        note: item.note,
+        supplements: item.supplements.map((supplement) => ({
+          tone: normalizeItemSupplementTone(supplement.tone),
+          content: supplement.content,
+        })),
         meta_layout: normalizeItemMetaLayout(item.meta_layout),
       })),
     })),
@@ -611,6 +655,35 @@ function renderAttachmentList(item, blockIndex, itemIndex) {
   `;
 }
 
+function renderSupplementRows(item, blockIndex, itemIndex) {
+  if (!item.supplements.length) {
+    return `<div class="empty-state empty-state--compact">補足行はまだありません。</div>`;
+  }
+
+  return item.supplements
+    .map(
+      (supplement, supplementIndex) => `
+        <div class="supplement-row">
+          <div class="supplement-toolbar">
+            <span class="supplement-index">補足 ${supplementIndex + 1}</span>
+            <div class="block-toolbar-actions">
+              <button class="ghost-button" type="button" data-move-supplement="${blockIndex}:${itemIndex}:${supplementIndex}" data-direction="up" ${supplementIndex === 0 ? "disabled" : ""}>上へ</button>
+              <button class="ghost-button" type="button" data-move-supplement="${blockIndex}:${itemIndex}:${supplementIndex}" data-direction="down" ${supplementIndex === item.supplements.length - 1 ? "disabled" : ""}>下へ</button>
+              <button class="ghost-button ghost-button--danger" type="button" data-remove-supplement="${blockIndex}:${itemIndex}:${supplementIndex}">削除</button>
+            </div>
+          </div>
+          <div class="supplement-inputs">
+            <select data-item-supplement-field="tone" data-block-index="${blockIndex}" data-item-index="${itemIndex}" data-supplement-index="${supplementIndex}">
+              ${itemSupplementToneOptions(supplement.tone)}
+            </select>
+            <textarea data-item-supplement-field="content" data-block-index="${blockIndex}" data-item-index="${itemIndex}" data-supplement-index="${supplementIndex}" placeholder="提出先や問い合わせ先など">${escapeHtml(supplement.content)}</textarea>
+          </div>
+        </div>
+      `,
+    )
+    .join("");
+}
+
 function renderItemCard(block, blockIndex, item, itemIndex) {
   return `
     <section class="item-card">
@@ -640,15 +713,19 @@ function renderItemCard(block, blockIndex, item, itemIndex) {
           <input data-item-field="due_date" data-block-index="${blockIndex}" data-item-index="${itemIndex}" type="date" value="${escapeHtml(item.due_date)}">
         </div>
         <div class="field field--wide">
-          <label>赤字表示</label>
+          <label>対象者/期限の並び</label>
           <select data-item-field="meta_layout" data-block-index="${blockIndex}" data-item-index="${itemIndex}">
             ${itemMetaLayoutOptions(item.meta_layout)}
           </select>
-          <p class="field-hint">別行は赤字補足 → 対象者 → 期限 の順で縦積みします。</p>
+          <p class="field-hint">補足行は常に別行です。ここでは対象者と期限だけを同じ行にするか決めます。</p>
         </div>
         <div class="field field--wide">
-          <label>赤字補足</label>
-          <textarea data-item-field="note" data-block-index="${blockIndex}" data-item-index="${itemIndex}" placeholder="裏面記入例にならい〜 など">${escapeHtml(item.note)}</textarea>
+          <div class="field-header">
+            <label>補足行</label>
+            <button class="ghost-button" type="button" data-add-supplement="${blockIndex}:${itemIndex}">補足行を追加</button>
+          </div>
+          <div class="supplement-stack">${renderSupplementRows(item, blockIndex, itemIndex)}</div>
+          <p class="field-hint">赤は提出/注意、青は問い合わせ/補足案内。本文の下に入力順で縦積み表示します。</p>
         </div>
       </div>
       <div class="field">
@@ -1297,6 +1374,31 @@ function bindEditEvents() {
     node.addEventListener("change", handler);
   });
 
+  document.querySelectorAll("[data-add-supplement]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const [blockIndex, itemIndex] = String(button.getAttribute("data-add-supplement"))
+        .split(":")
+        .map((value) => Number(value));
+      state.blocks[blockIndex].items[itemIndex].supplements.push(initialItemSupplement());
+      markDirty();
+      renderEditor();
+    });
+  });
+
+  document.querySelectorAll("[data-item-supplement-field]").forEach((node) => {
+    const field = node.getAttribute("data-item-supplement-field");
+    const blockIndex = Number(node.getAttribute("data-block-index"));
+    const itemIndex = Number(node.getAttribute("data-item-index"));
+    const supplementIndex = Number(node.getAttribute("data-supplement-index"));
+    const handler = (event) => {
+      state.blocks[blockIndex].items[itemIndex].supplements[supplementIndex][field] = event.currentTarget.value;
+      markDirty();
+      schedulePreview(`supplement-${field}`);
+    };
+    node.addEventListener("input", handler);
+    node.addEventListener("change", handler);
+  });
+
   document.querySelectorAll("[data-remove-block]").forEach((button) => {
     button.addEventListener("click", () => {
       const index = Number(button.getAttribute("data-remove-block"));
@@ -1312,6 +1414,17 @@ function bindEditEvents() {
         .split(":")
         .map((value) => Number(value));
       state.blocks[blockIndex].items.splice(itemIndex, 1);
+      markDirty();
+      renderEditor();
+    });
+  });
+
+  document.querySelectorAll("[data-remove-supplement]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const [blockIndex, itemIndex, supplementIndex] = String(button.getAttribute("data-remove-supplement"))
+        .split(":")
+        .map((value) => Number(value));
+      state.blocks[blockIndex].items[itemIndex].supplements.splice(supplementIndex, 1);
       markDirty();
       renderEditor();
     });
@@ -1345,6 +1458,24 @@ function bindEditEvents() {
       }
       const [item] = items.splice(itemIndex, 1);
       items.splice(targetIndex, 0, item);
+      markDirty();
+      renderEditor();
+    });
+  });
+
+  document.querySelectorAll("[data-move-supplement]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const [blockIndex, itemIndex, supplementIndex] = String(button.getAttribute("data-move-supplement"))
+        .split(":")
+        .map((value) => Number(value));
+      const direction = button.getAttribute("data-direction");
+      const supplements = state.blocks[blockIndex].items[itemIndex].supplements;
+      const targetIndex = direction === "up" ? supplementIndex - 1 : supplementIndex + 1;
+      if (targetIndex < 0 || targetIndex >= supplements.length) {
+        return;
+      }
+      const [supplement] = supplements.splice(supplementIndex, 1);
+      supplements.splice(targetIndex, 0, supplement);
       markDirty();
       renderEditor();
     });
