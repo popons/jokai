@@ -383,3 +383,19 @@
 - 2026-03-19 11:51:26 +0900 [codified-context] `codified-context-maintenance` を debug-followup で起動し、inspect script と routing audit を実行。`web-src/main.js` / `web-src/notice-pdf.js` の変更に対して `AGENTS.md` と `context/repo-map.md` の小項目表示ルール、および `web-dist` 埋め込み運用の明文化が不足していると判断した。
 - 2026-03-19 11:52:29 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` を更新し、小項目番号は空 item では出さない current truth と、`web-dist` は build 後も実行中バイナリへ自動反映されない運用注意を追記した。
 - 2026-03-19 11:52:54 +0900 [コミット準備] 小項目の空表示修正と codified-context 更新は同じ不具合の再発防止として一体なので、`fix: 空の小項目では番号を出さない` の 1 コミットでまとめる方針に決めた。
+- 2026-03-19 11:55:00 +0900 [調査] ユーザー提示画像 `timg_01KM201ZYA4BAJEKFAQZJP3BJ7.png` と `docs/exmple.png`、`web-src/notice-pdf.js` を突き合わせ、本文列は `x=18 width=110`、サムネは `x=146 width=22` で固定されており、その間に約 18mm の未使用帯が常に残る設計だと確認した。
+- 2026-03-19 11:55:00 +0900 [調査] 可読性確保は既に `pushTextSchema(..., { halo: true })` と `TEXT_HALO_OFFSETS_MM` による文字周囲の白ハローで行っているが、現状は文字単位の細いハローであり、本文ブロック自体の白帯を作る実装ではないと確認した。
+- 2026-03-19 11:56:14 +0900 [調査] `createTextSchema()` は `backgroundColor` フィールド自体は持つが現状は空文字固定で未使用。白地可読性を強めるなら、既存ハロー強化と背景色利用では見え方が大きく変わるため、要件で明示決定が必要と判断した。
+- 2026-03-19 12:03:38 +0900 [要件] ユーザー回答として、右へ伸ばす対象は title/日時/場所/footer を除く紙面内見出し系と本文/補足/メタ全体、右端は赤ラベル直前、適用範囲は全 item、可読性は既存の白ハロー方式を前提にする方針で確定した。
+- 2026-03-19 12:05:26 +0900 [ビルド] `npm run build` と `cargo fmt` を実行した。12040 への `curl` は connection refused で、検証用 server は未起動だと確認した。
+- 2026-03-19 12:07:22 +0900 [実装] `web-src/notice-pdf.js` に本文右端の共通計算を追加し、紙面内見出し系・本文・補足・対象者/期限メタの width を赤い右ラベル直前まで広げた。サムネ画像は引き続き背面、可読性は既存の white halo 方式を維持した。
+- 2026-03-19 12:07:22 +0900 [検証] `./run-server.sh` で 12040 を起動し、`/issues/e773ffe9-4c98-4efe-9eb2-04ae309bfdd0/edit` を再読込して preview を確認。LIME 指摘の死帯が縮み、本文がサムネに重なりつつ赤い右ラベルは侵食していないことを確認した。
+- 2026-03-19 12:07:22 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` を更新し、本文右余白は赤ラベル直前まで攻め、サムネ重なりは許容しつつ white halo で可読性を守る current truth を追記した。
+- 2026-03-19 12:13:42 +0900 [実装] `web-src/notice-pdf.js` の footer note width も固定 128mm から動的計算へ変更し、左下赤メモを右下連絡先ブロックの直前まで横に伸ばした。
+- 2026-03-19 12:13:42 +0900 [検証] `./run-server.sh` を再起動後、`/issues/e773ffe9-4c98-4efe-9eb2-04ae309bfdd0/edit` の preview で footer 赤メモが横に伸び、右下連絡先ブロックと衝突していないことを確認した。
+- 2026-03-19 12:13:42 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` に、footer 左下赤メモも右下連絡先ブロックの直前まで横に伸ばす current truth と検証観点を追記した。
+- 2026-03-19 12:17:45 +0900 [実装] `web-src/notice-pdf.js` の `TEXT_HALO_OFFSETS_MM` を倍化し、文字周囲の white halo 太さを 2 倍にした。
+- 2026-03-19 12:19:29 +0900 [ビルド] `npm run build` と `cargo fmt` を再実行し、`./run-server.sh` を再起動した。
+- 2026-03-19 12:19:29 +0900 [検証] `http://localhost:12040/issues/e773ffe9-4c98-4efe-9eb2-04ae309bfdd0/edit` を再読込して preview を確認。本文/補足/メタ/フッターの white halo が視認できる程度に太くなり、赤ラベルや右下連絡先ブロックとの衝突は発生していない。
+- 2026-03-19 12:21:53 +0900 [codified-context] `codified-context-maintenance` を debug-followup で再実行し、inspect script / routing audit を確認。routing は十分だが、halo 倍化後の可読性前提が codified context に未反映と判断した。
+- 2026-03-19 12:21:53 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` を更新し、サムネ重なり可読性は現在は強めにした white halo に依存し、halo 調整時は実データ画面で再確認する運用を追記した。

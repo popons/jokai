@@ -28,9 +28,9 @@ const BLANK_PAGE_PADDING_TOP_MM = Array.isArray(BLANK_A4_PDF.padding) ? Number(B
 const FOOTER_BOX_SLACK_MM = 0.6;
 const FOOTER_BOTTOM_MARGIN_MM = BLANK_PAGE_PADDING_BOTTOM_MM + FOOTER_BOX_SLACK_MM;
 const FOOTER_LEFT_X = 14;
-const FOOTER_LEFT_WIDTH = 128;
 const FOOTER_RIGHT_X = 152;
 const FOOTER_RIGHT_WIDTH = 42;
+const FOOTER_NOTE_GAP_BEFORE_CONTACT_MM = 1.2;
 const FOOTER_NOTE_FONT_SIZE = 9;
 const FOOTER_NOTE_LINE_HEIGHT = 1.22;
 const FOOTER_CONTACT_FONT_SIZE = 8.6;
@@ -47,18 +47,19 @@ const THUMB_BASE_HEIGHT_MM = 13.2;
 const THUMB_BASE_RIGHT_X = THUMB_BASE_X + THUMB_BASE_WIDTH_MM;
 const THUMB_LABEL_X = THUMB_BASE_X + 24.4;
 const THUMB_LABEL_WIDTH_MM = 24;
+const TEXT_RIGHT_GAP_BEFORE_LABEL_MM = 1.2;
 const THUMB_SLOT_HEIGHT_MM = 16.6;
 const THUMB_SLOT_GAP_MM = 2.6;
 const TEXT_HALO_COLOR = "#ffffff";
 const TEXT_HALO_OFFSETS_MM = Object.freeze([
-  [-0.32, 0],
-  [0.32, 0],
-  [0, -0.32],
-  [0, 0.32],
-  [-0.24, -0.24],
-  [0.24, -0.24],
-  [-0.24, 0.24],
-  [0.24, 0.24],
+  [-0.64, 0],
+  [0.64, 0],
+  [0, -0.64],
+  [0, 0.64],
+  [-0.48, -0.48],
+  [0.48, -0.48],
+  [-0.48, 0.48],
+  [0.48, 0.48],
 ]);
 export const PAPER_FONT_SCALE_ORDER = Object.freeze([
   "title",
@@ -483,6 +484,18 @@ function mmPrecise(value) {
   return Number(value.toFixed(2));
 }
 
+function textRightLimitMm() {
+  return THUMB_LABEL_X - TEXT_RIGHT_GAP_BEFORE_LABEL_MM;
+}
+
+function textWidthFromX(x) {
+  return mmPrecise(textRightLimitMm() - x);
+}
+
+function footerNoteWidthMm() {
+  return mmPrecise(FOOTER_RIGHT_X - FOOTER_NOTE_GAP_BEFORE_CONTACT_MM - FOOTER_LEFT_X);
+}
+
 function clampSchemaY(value) {
   return Math.max(BLANK_PAGE_PADDING_TOP_MM, mmPrecise(value));
 }
@@ -662,8 +675,9 @@ function thumbnailDrawGeometry(asset, scaleFactor) {
 
 function computeFooterLayout(issue, typography) {
   const noteText = normalizeText(issue.footer_note);
+  const noteWidth = footerNoteWidthMm();
   const noteBlock = wrapText(noteText, {
-    widthMm: FOOTER_LEFT_WIDTH,
+    widthMm: noteWidth,
     fontSizePt: typography.footer.note,
     lineHeight: typography.footer.lineHeight.note,
     fontFamily: BODY_FONT_FAMILY,
@@ -678,6 +692,7 @@ function computeFooterLayout(issue, typography) {
   return {
     noteText,
     noteLines,
+    noteWidth,
     noteHeight: noteBlock.heightMm,
     contactHeight,
     contentHeight,
@@ -723,7 +738,7 @@ function addFinalPageFooter(page, issue, footerLayout, typography) {
         name: `footer-note-${page.length}`,
         x: FOOTER_LEFT_X,
         y: footerLayout.footerTop + Math.max(0, footerLayout.contentHeight - footerLayout.noteHeight),
-        width: FOOTER_LEFT_WIDTH,
+        width: footerLayout.noteWidth,
         height: footerLayout.noteHeight + 0.5,
         content: noteText,
         fontName: BODY_BOLD_FONT_NAME,
@@ -859,13 +874,14 @@ function addFirstPageHeader(page, issue, typography) {
   }
 
   const mainHeadingHeight = textBlockHeightMm(typography.h1.main, typography.h1.lineHeight.main, 1);
+  const mainHeadingX = 12;
   pushTextSchema(
     page,
     {
       name: `main-heading-${page.length}`,
-      x: 12,
+      x: mainHeadingX,
       y: cursorY,
-      width: 60,
+      width: textWidthFromX(mainHeadingX),
       height: mainHeadingHeight + 0.8,
       content: mainHeadingLabel(issue),
       fontName: BODY_BOLD_FONT_NAME,
@@ -955,7 +971,7 @@ function buildItemSupplementLayouts(item, typography) {
   return normalizeItemSupplements(item).map((supplement) => {
     const formattedContent = formatIndentedCopyText(supplement.content);
     const block = wrapText(formattedContent, {
-      widthMm: 110,
+      widthMm: textWidthFromX(18),
       fontSizePt: typography.body.meta,
       lineHeight: typography.body.lineHeight.meta,
       fontFamily: BODY_FONT_FAMILY,
@@ -971,7 +987,7 @@ function buildItemSupplementLayouts(item, typography) {
 function computeSectionHeadingGeometry(block, index, typography) {
   const sectionTitle = `${index + 1}. ${block.heading || labelForBlockKind(block.block_kind)}`;
   const titleBlock = wrapText(sectionTitle, {
-    widthMm: 128,
+    widthMm: textWidthFromX(14),
     fontSizePt: typography.h1.section,
     lineHeight: typography.h1.lineHeight.section,
     fontFamily: BODY_FONT_FAMILY,
@@ -983,6 +999,7 @@ function computeSectionHeadingGeometry(block, index, typography) {
 }
 
 function computeItemGeometry(item, assets, itemIndex, typography) {
+  const bodyTextWidthMm = textWidthFromX(18);
   const headingText = normalizeText(item.heading);
   const titleText = itemHasVisibleContent(item, assets.length)
     ? headingText
@@ -990,14 +1007,14 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
       : itemMarker(itemIndex)
     : "";
   const headingBlock = wrapText(titleText, {
-    widthMm: 110,
+    widthMm: bodyTextWidthMm,
     fontSizePt: typography.h2.item,
     lineHeight: typography.h2.lineHeight,
     fontFamily: BODY_FONT_FAMILY,
   });
   const bodyText = formatIndentedCopyText(item.body);
   const bodyBlock = wrapText(bodyText, {
-    widthMm: 110,
+    widthMm: bodyTextWidthMm,
     fontSizePt: typography.body.copy,
     lineHeight: typography.body.lineHeight.copy,
     fontFamily: BODY_FONT_FAMILY,
@@ -1010,7 +1027,7 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
   );
   const metaText = formatIndentedCopyText(buildItemMetaLines(item).join("\n"));
   const metaBlock = wrapText(metaText, {
-    widthMm: 110,
+    widthMm: bodyTextWidthMm,
     fontSizePt: typography.body.meta,
     lineHeight: typography.body.lineHeight.meta,
     fontFamily: BODY_FONT_FAMILY,
@@ -1042,13 +1059,14 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
 
 function addSectionHeading(page, block, index, rowTop, typography) {
   const { content, height } = computeSectionHeadingGeometry(block, index, typography);
+  const sectionX = 14;
   pushTextSchema(
     page,
     {
       name: `section-${page.length}`,
-      x: 14,
+      x: sectionX,
       y: rowTop,
-      width: 132,
+      width: textWidthFromX(sectionX),
       height,
       content,
       fontName: BODY_BOLD_FONT_NAME,
@@ -1062,6 +1080,7 @@ function addSectionHeading(page, block, index, rowTop, typography) {
 
 function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
   const headingX = 18;
+  const textWidth = textWidthFromX(headingX);
   const thumbScale = normalizeItemThumbnailScalePercent(item.thumb_scale_percent) / 100;
   const { titleText, headingText, bodyText, bodyLayout, supplementLayouts, metaText, metaHeight, rowHeight } =
     computeItemGeometry(item, assets, itemIndex, typography);
@@ -1088,7 +1107,7 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
       name: `item-heading-${page.length}`,
       x: headingX,
       y: rowTop,
-      width: 110,
+      width: textWidth,
       height: Math.max(headingText.heightMm + 0.4, 4.6),
       content: titleText,
       fontName: BODY_FONT_NAME,
@@ -1106,7 +1125,7 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
         name: `item-body-${page.length}`,
         x: headingX,
         y: cursorY,
-        width: 110,
+        width: textWidth,
         height: bodyLayout.heightMm + 0.5,
         content: bodyText,
         fontSize: typography.body.copy,
@@ -1124,7 +1143,7 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
         name: `item-supplement-${page.length}`,
         x: headingX,
         y: cursorY,
-        width: 110,
+        width: textWidth,
         height: supplement.heightMm + 0.5,
         content: supplement.formattedContent,
         fontSize: typography.body.meta,
@@ -1144,7 +1163,7 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
         name: `item-meta-${page.length}`,
         x: headingX,
         y: cursorY,
-        width: 110,
+        width: textWidth,
         height: metaHeight + 0.5,
         content: metaText,
         fontSize: typography.body.meta,
