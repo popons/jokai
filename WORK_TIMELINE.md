@@ -352,3 +352,5 @@
 - 2026-03-19 09:33:24 +0900 [調査開始] `build-error.txt`・`test-error.txt`・`watch-run-server.sh`・`watch-run-common.sh`・`run-web.sh` を確認し、watch なしの `./run-server.sh` を最小差分で追加する方針で着手。
 - 2026-03-19 09:33:54 +0900 [実装] `run-server.sh` を追加し、`DATABASE_URL` / `JOKAI_BIND` の既定値は watch 版と揃えたまま、`npm run build` 後に `cargo run -- web ...` を一発実行する構成にした。`chmod +x`・`cargo fmt`・`zsh -n run-server.sh` まで実施。
 - 2026-03-19 09:34:08 +0900 [検証] 変更後 1 秒待機して `build-error.txt`・`test-error.txt`・`clippy-error.txt` を確認し、失敗なしを確認。`build-error-win.txt` は未生成のまま。
+- 2026-03-19 10:27:35 +0900 [コミット準備] `git status` と `20260319-templ-shogai-kyosai.svg` の差分を確認し、作業中差分は SVG 1ファイルのみ、見た目調整と差し込み文字整理が同一目的のため 1コミットで扱う判断をした。
+- 2026-03-19 10:28:03 +0900 [コミット方針] 件名は `fix: 農作業傷害共済SVGの差し込み表示と金額欄を見直す` とし、本文で「契約者名・年齢プレースホルダの引用符除去」「重複していた金額単位ラベル削除」「注意書き強調と枠サイズ調整」を説明する方針に決めた。
