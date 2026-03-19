@@ -102,8 +102,8 @@ pythonコマンドないので、python3コマンドを使ってね
 ## Repo Map
 
 - `src/main.rs`: Axum エントリポイント。埋め込み frontend asset / 紙面用フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、issue の draft 限定削除、一覧からの深い複製、添付の DB 保存、内部 temp dir を使う preview / thumbnail 生成、`/issues/{id}/print` と `/template-documents/{id}/print` の印刷 shell 配信を担当。`農作業傷害共済` は raw SVG を返す `/template-documents/{id}/print` 正本 HTML、headless Chromium による `/api/template-documents/{id}/print-pdf`、`/api/template-documents/{id}/preview-images` もここで持つ。legacy filesystem 吸い上げは `db init` / `db migrate` の明示 `--legacy-storage-dir` 側へ分離した。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
-- `web-src/main.js`: 文書ファミリー切替つき一覧画面、常会案内 editor、SVG テンプレ帳票 editor、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、template document の rows[] 台帳 UI と補助 JSON editor、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集、`thumb_scale_percent` による項目サムネ倍率 slider を担当。`農作業傷害共済` editor は `payload.rows[]` を 1 行 1 ページ前提で編集し、行編集または valid JSON 変更後に auto-save して、その保存済み draft を使って `preview-images` を再取得する。
-- `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計、item ごとの赤/青補足行群の組版、画像実寸比を踏まえた右上基点の項目サムネ倍率反映、本文白まわりの可読性確保、halo の top padding 超過防止をここで守る。
+- `web-src/main.js`: 文書ファミリー切替つき一覧画面、常会案内 editor、SVG テンプレ帳票 editor、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、template document の rows[] 台帳 UI と補助 JSON editor、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集、`thumb_scale_percent` による項目サムネ倍率 slider を担当。常会案内 editor の小項目 toolbar は、heading/body/対象者/期限/補足行/添付のいずれかがあるときだけ `①` などの番号を表示する。`農作業傷害共済` editor は `payload.rows[]` を 1 行 1 ページ前提で編集し、行編集または valid JSON 変更後に auto-save して、その保存済み draft を使って `preview-images` を再取得する。
+- `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計、item ごとの赤/青補足行群の組版、画像実寸比を踏まえた右上基点の項目サムネ倍率反映、本文白まわりの可読性確保、halo の top padding 超過防止をここで守る。小項目見出しの `①` などの番号は、紙面に出る内容が 1 つでもある item にだけ表示し、完全に空の item では番号も出さない。
 - `web-src/template-doc-registry.js`: `農作業傷害共済` 用テンプレ定義、binding キー、`payload.rows[]` の default/normalize、行単位必須チェック、タイトル自動生成規則の正本。
 - `web-src/template-doc-pdf.js`: `templateDocumentPdfFileName()` と rows[] 対応の browser-side 補助 builder を持つ補助モジュール。`農作業傷害共済` の本線 preview / print / PDF 出力は Chromium 経路が正本で、ここは補助扱い。
 - `web-src/app.css`: 編集UIとプレビューUIの見た目。項目サムネ倍率 slider のような非印刷UIの密度もここで保つ。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
@@ -123,6 +123,7 @@ pythonコマンドないので、python3コマンドを使ってね
 - 編集画面の操作性を触るときは、`web-src/main.js` の DOM 構造と `web-src/app.css` の gap/padding/min-height を一緒に見ること。片方だけ触ると、また間延びする。
 - item 添付導線を触るときは、`web-src/main.js` のファイル選択・貼り付け・`Clipboardから追加` ボタンの 3 導線が同じ `POST /api/items/{id}/attachments` に収束している前提を崩さないこと。本文入力欄の通常貼り付けは横取りしないこと。
 - item の補足行群（赤/青）・対象者・期限・項目サムネ倍率の紙面表示を触るときは、`web-src/main.js` の補足行 UI / `meta_layout` UI / サムネ倍率 slider、`web-src/notice-pdf.js` の補足行/メタ行/サムネ描画、`src/main.rs` と `db/*.sql` の `block_item_supplements` / `block_items.meta_layout` / `block_items.thumb_scale_percent` をセットで確認すること。
+- 小項目の `①` などの表示を触るときは、`web-src/main.js` の item toolbar と `web-src/notice-pdf.js` の紙面見出しを両方確認し、空の item では番号を出さない挙動を揃えること。
 - right-top のズレや preview が `/api/preview-renders` 到達前に固まる症状を触るときは、まず `web-src/notice-pdf.js` の `measureImageDataUrl()` と `pushTextSchema()` の top padding clamp を確認すること。
 - 紙面/PDF 用フォントを触るときは、`bundled-assets/fonts/README.md`、`src/main.rs` の埋め込み配信、`web-src/notice-pdf.js` の `loadFonts()` をセットで確認すること。紙面側は Web フォント前提に戻さず、可変フォントをそのまま `pdfme` に渡さないこと。
 - プレビュー不一致を触るときは、`常会案内` なら `web-src/main.js` と `src/main.rs` の `/api/preview-renders`、`農作業傷害共済` なら `web-src/main.js` と `src/main.rs` の `/api/template-documents/{id}/preview-images` / `/template-documents/{id}/print` をセットで確認すること。
@@ -134,7 +135,7 @@ pythonコマンドないので、python3コマンドを使ってね
 ## 既知コマンド
 
 - `npm ci`: 初回 clone 後や `node_modules` 不在の作業ツリーでフロント依存を復元する。未実行だと `./watch-run-server.sh` 内の `npm run build` が `vite: not found` で停止する。
-- `npm run build`: `web-src/` から `web-dist/` を再生成する。
+- `npm run build`: `web-src/` から `web-dist/` を再生成する。`web-dist` は実行中 Rust バイナリへ自動反映されないので、watch なし実行中の server では再起動か再ビルド済みバイナリへの切り替えが必要。
 - `cargo fmt`: 変更後に実行が必要。
 - `./run-server.sh`: watch なしで `npm run build` 後に `cargo run -- web ...` を一発起動する。
 - `./db-init.sh` / `./db-migrate.sh` / `./db-status.sh` / `./db-reset.sh`: DB 操作用スクリプト。

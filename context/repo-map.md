@@ -17,8 +17,8 @@
 | Path | Role |
 |---|---|
 | `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信を担当。`農作業傷害共済` は `payload.rows[]` を single object 互換で正規化し、行数ベースの自動タイトルを返し、server-rendered `/template-documents/{id}/print` 正本 HTML、headless Chromium による `print-pdf` 生成、`preview-images` API もここで持つ。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
-| `web-src/main.js` | 文書ファミリー切替付き一覧画面、常会案内 editor、SVG テンプレ帳票 editor の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、rows[] 台帳 UI、補助 JSON editor、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替え、`thumb_scale_percent` による項目単位サムネ倍率 slider を担当。`農作業傷害共済` editor では 1 行 1 ページ前提で `payload.rows[]` を編集し、行編集または valid JSON 入力時に auto-save 後、server-side `preview-images` を再取得する |
-| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。右脇サムネは `thumb_scale_percent` で項目ごとに 80〜200% を右上基点で拡縮し、`measureImageDataUrl()` で実画像アスペクト比を測って「見えている画像」自体の右上を固定する。画像自体は全テキストの背面へ置き、`pushTextSchema()` の halo は blank page の top padding を割らないよう clamp する。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
+| `web-src/main.js` | 文書ファミリー切替付き一覧画面、常会案内 editor、SVG テンプレ帳票 editor の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、rows[] 台帳 UI、補助 JSON editor、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替え、`thumb_scale_percent` による項目単位サムネ倍率 slider を担当。常会案内 editor の小項目 toolbar は、heading/body/対象者/期限/補足行/添付のいずれかがあるときだけ `①` などの番号を表示する。`農作業傷害共済` editor では 1 行 1 ページ前提で `payload.rows[]` を編集し、行編集または valid JSON 入力時に auto-save 後、server-side `preview-images` を再取得する |
+| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。小項目見出しの `①` などの番号は、紙面に出る内容が 1 つでもある item にだけ表示し、完全に空の item では番号も出さない。右脇サムネは `thumb_scale_percent` で項目ごとに 80〜200% を右上基点で拡縮し、`measureImageDataUrl()` で実画像アスペクト比を測って「見えている画像」自体の右上を固定する。画像自体は全テキストの背面へ置き、`pushTextSchema()` の halo は blank page の top padding を割らないよう clamp する。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
 | `web-src/template-doc-registry.js` | `農作業傷害共済` の template 定義、binding キー、`payload.rows[]` の default/normalize、行単位必須チェック、タイトル自動生成規則の正本 |
 | `web-src/template-doc-pdf.js` | `templateDocumentPdfFileName()` と rows[] 対応の browser-side 補助 builder を持つ補助モジュール。`農作業傷害共済` の本線 preview / print / PDF 出力は 2026-03-19 時点で Chromium 経路が正本 |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
@@ -31,7 +31,7 @@
 | `docs/exmple.png` | 見本紙面の正本 |
 | `tests/version_flags.rs` | `--version` / `-V` の CLI テスト |
 | `build.rs` | ビルド時刻と埋め込み asset 再読込トリガを設定する |
-| `web-dist/` | フロントエンドのビルド成果物。手編集禁止。runtime ではバイナリ埋め込みで配信する |
+| `web-dist/` | フロントエンドのビルド成果物。手編集禁止。runtime ではバイナリ埋め込みで配信するため、watch なしで起動中の server は build 後に再起動しない限り古い asset を配り続ける |
 
 ## Runtime Flow
 
@@ -161,6 +161,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 
 - 初回 clone 後や WSL 側へ作業ツリーを持ち直した直後など `node_modules` が無い状態では、先に `npm ci` を実行する。未セットアップのまま `./watch-run-server.sh` を動かすと内部の `npm run build` が `vite: not found` で落ちる。
 - `web-src/` を触ったら `npm run build` で `web-dist/` を更新する。配信は埋め込みだが、埋め込み元はこの build 成果物。
+- `web-src/` を触って `npm run build` だけ済ませても、watch なしで動いている既存 server は古い `web-dist` を埋め込んだままの可能性がある。画面が変わらないときは browser cache だけでなく server 側の再起動有無も確認する。
 - 変更後は `cargo fmt` を実行する。
 - watch なしでローカル確認だけ回したいときは `./run-server.sh` を使う。これは `npm run build` 後に `cargo run -- web ...` を一発起動する補助スクリプト。
 - `cargo check` / `cargo test` / `cargo clippy` はバックグラウンド監視へ委ね、保存後 1 秒待ってから `build-error.txt` / `test-error.txt` / `build-error-win.txt` / `clippy-error.txt` を読む。
@@ -170,6 +171,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 - `農作業傷害共済` の一覧カードを触ったら、入力済み件数が `row_count` と一致すること、編集画面と印刷画面が同じ件数・同じページ数になることを確認する。
 - 一覧カードの操作を触ったら、`draft` で `複製` / `削除` が出ること、`published` の `削除` が disabled のまま API でも拒否されることを確認する。
 - item 添付導線を触ったら、ファイル選択、貼り付け欄での `Ctrl+V` / `Cmd+V`、`Clipboardから追加` ボタン、本文 textarea での通常テキスト貼り付け非干渉を確認する。
+- 小項目番号表示を触ったら、空の item では editor toolbar も紙面見出しも `①` を出さず、heading/body/対象者/期限/補足行/添付のどれかが入った時点で番号が出ることを確認する。
 - 紙面を変える前に `docs/exmple.png` を確認し、差分の理由を説明できない変更は入れない。
 - 最終PDFの不具合は `web-src/main.js` の `downloadNoticePdf()` / `openPrintPageFromEditor()`、`web-src/notice-pdf.js`、`src/main.rs` の `/issues/{id}/print` shell を優先確認する。`/api/issues/{id}/print-pdf` は本線ではない。
 - 非印刷 editor UI のスクロールが多いときは、まず `masthead` / action-row / card 内 gap を詰める。A4 プレビュー本体を縮めてごまかさない。

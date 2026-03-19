@@ -137,6 +137,19 @@ export function normalizePaperFontScale(raw = {}) {
   );
 }
 
+export function itemHasVisibleContent(
+  item,
+  attachmentCount = Array.isArray(item?.attachments) ? item.attachments.length : 0,
+) {
+  return Boolean(
+    normalizeText(item?.heading) ||
+      normalizeText(item?.body) ||
+      normalizeItemSupplements(item).length ||
+      buildItemMetaLines(item).length ||
+      attachmentCount > 0,
+  );
+}
+
 function paperFontScaleFactor(fontScale, category) {
   return (fontScale[category] || PAPER_FONT_SCALE_DEFAULT_PERCENT) / PAPER_FONT_SCALE_DEFAULT_PERCENT;
 }
@@ -970,9 +983,12 @@ function computeSectionHeadingGeometry(block, index, typography) {
 }
 
 function computeItemGeometry(item, assets, itemIndex, typography) {
-  const titleText = normalizeText(item.heading)
-    ? `${itemMarker(itemIndex)} ${normalizeText(item.heading)}`
-    : itemMarker(itemIndex);
+  const headingText = normalizeText(item.heading);
+  const titleText = itemHasVisibleContent(item, assets.length)
+    ? headingText
+      ? `${itemMarker(itemIndex)} ${headingText}`
+      : itemMarker(itemIndex)
+    : "";
   const headingBlock = wrapText(titleText, {
     widthMm: 110,
     fontSizePt: typography.h2.item,

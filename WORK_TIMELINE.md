@@ -371,3 +371,15 @@
 - 2026-03-19 11:26:00 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` を rows[] 台帳 UI・1行1ページ・日付+件数の自動命名・Chromium 複数ページ印刷の現実へ更新。新規 context doc や skill 追加は不要と判断。
 - 2026-03-19 11:26:31 +0900 [codified-context] 更新後に inspection / routing audit / stale 文言 grep を再実行し、template document の current truth が `AGENTS.md` と `context/repo-map.md` の両方で rows[] 前提へ追従したことを確認。
 - 2026-03-19 11:38:45 +0900 [コミット準備] `git diff --stat` と個別差分を確認し、`20260319-templ-shogai-kyosai.svg` の紙面修正と rows[] 実装+codified-context 更新は責務が分かれるため 2 コミットに分離する判断をした。
+- 2026-03-19 11:42:45 +0900 [調査] `docs/exmple.png`・`context/repo-map.md`・`jokai-pdfme-layout` を確認し、今回の修正対象は `web-src/notice-pdf.js` の小項目番号表示ロジックだと切り分けた。
+- 2026-03-19 11:42:45 +0900 [調査] `build-error.txt` と `test-error.txt` は成功状態、`clippy-error.txt` も成功状態を確認。`build-error-win.txt` は未作成だった。
+- 2026-03-19 11:44:58 +0900 [実装] `web-src/notice-pdf.js` に小項目の表示内容有無を判定する共通関数を追加し、heading/body/対象者/期限/補足行/添付のいずれかがある場合だけ `①` などの番号を出すよう変更した。
+- 2026-03-19 11:44:58 +0900 [実装] `web-src/main.js` の item toolbar も同じ判定を使うように揃え、空の小項目では `① 項目` ではなく `項目` 表示にした。
+- 2026-03-19 11:45:52 +0900 [ビルド] `npm run build` を実行し、`web-dist/app.js` と `web-dist/app.css` を更新した。Vite の chunk size warning は出たが build 自体は成功。
+- 2026-03-19 11:45:52 +0900 [整形] `cargo fmt` を実行した。
+- 2026-03-19 11:45:52 +0900 [検証] 保存後 1 秒待機して `build-error.txt`・`test-error.txt`・`clippy-error.txt` を確認し、失敗なしを再確認。`build-error-win.txt` は未生成のまま。
+- 2026-03-19 11:46:54 +0900 [検証] Chrome で `http://localhost:12040/issues/e773ffe9-4c98-4efe-9eb2-04ae309bfdd0/edit` を再読込して確認したが、空の小項目 toolbar はまだ `① 項目` のままだった。`src/main.rs` が `web-dist` を `include_dir!` で埋め込む構成のため、実行中サーバが最新 frontend asset をまだ配信していないと判断。
+- 2026-03-19 11:47:30 +0900 [検証] ユーザー提示画像 `timg_01KM1ZGD7N7ZY87ZQ8V3SXT421.png` も確認し、「3. その他」で heading/body 未入力なのに `①` だけ表示されている現象が修正対象と一致すると再確認した。
+- 2026-03-19 11:51:26 +0900 [codified-context] `codified-context-maintenance` を debug-followup で起動し、inspect script と routing audit を実行。`web-src/main.js` / `web-src/notice-pdf.js` の変更に対して `AGENTS.md` と `context/repo-map.md` の小項目表示ルール、および `web-dist` 埋め込み運用の明文化が不足していると判断した。
+- 2026-03-19 11:52:29 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` を更新し、小項目番号は空 item では出さない current truth と、`web-dist` は build 後も実行中バイナリへ自動反映されない運用注意を追記した。
+- 2026-03-19 11:52:54 +0900 [コミット準備] 小項目の空表示修正と codified-context 更新は同じ不具合の再発防止として一体なので、`fix: 空の小項目では番号を出さない` の 1 コミットでまとめる方針に決めた。

@@ -6,6 +6,7 @@ import {
   PAPER_FONT_SCALE_LIMITS,
   PAPER_FONT_SCALE_ORDER,
   buildNoticePdfDocument,
+  itemHasVisibleContent,
   normalizeItemThumbnailScalePercent,
   normalizePaperFontScale,
   pdfFileName,
@@ -985,10 +986,11 @@ function renderSupplementRows(item, blockIndex, itemIndex) {
 }
 
 function renderItemCard(block, blockIndex, item, itemIndex) {
+  const itemIndexLabel = itemHasVisibleContent(item) ? `${itemMarker(itemIndex)} 項目` : "項目";
   return `
     <section class="item-card">
       <div class="item-toolbar">
-        <span class="item-index">${itemMarker(itemIndex)} 項目</span>
+        <span class="item-index">${itemIndexLabel}</span>
         <div class="block-toolbar-actions">
           <button class="ghost-button" type="button" data-move-item="${blockIndex}:${itemIndex}" data-direction="up" ${itemIndex === 0 ? "disabled" : ""}>上へ</button>
           <button class="ghost-button" type="button" data-move-item="${blockIndex}:${itemIndex}" data-direction="down" ${itemIndex === block.items.length - 1 ? "disabled" : ""}>下へ</button>
