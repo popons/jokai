@@ -404,3 +404,4 @@
 - 2026-03-19 12:33:23 +0900 [調査] `buildTemplate()` は 1 ページ返却だが、`@pdfme/generator` 後の PDF は 2 ページ化することを再現。`footer` 付近の halo text を含むときだけ白紙 2 ページ目が発生し、`y >= 282mm` 付近の最小再現も確認。
 - 2026-03-19 12:35:06 +0900 [修正] `web-src/notice-pdf.js` の footer note / contact だけ halo を外した。本文側 halo は維持しつつ、同ファイルから直接生成した PDF が 1 ページ化することを `pdfinfo` で確認。
 - 2026-03-19 12:35:06 +0900 [codified-context] `codified-context-maintenance` を debug-followup で実施。`AGENTS.md` と `context/repo-map.md` に footer halo が `pdfme` の白紙ページ bug を踏む知見を反映する方針を確定。
+- 2026-03-19 12:43:59 +0900 [リリース] user-facing な正本版は `Cargo.toml` / `CARGO_PKG_VERSION` と判断し、`0.1.0` から `0.2.0` へ minor bump。`ChangeLog.md` / `CHANGELOG.md` は repo 内に存在しないため新規作成は見送った。

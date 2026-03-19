@@ -1,6 +1,6 @@
 [package]
 name = "jokai"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Yutaka Furukawa <frkw@fuse.co.jp>"]
 edition = "2024"
 build = "build.rs"
