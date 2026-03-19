@@ -18,6 +18,7 @@ import {
   familyDefinition,
   familyIndexPath,
   familyTemplateDefinitions,
+  missingTemplatePayloadKeys,
   normalizeFamilyKey,
   normalizeTemplatePayload,
   templateDefinition,
@@ -26,7 +27,6 @@ import {
   templatePayloadText,
 } from "./template-doc-registry.js";
 import {
-  buildTemplateDocumentPdfDocument,
   templateDocumentPdfFileName,
 } from "./template-doc-pdf.js";
 
@@ -89,12 +89,14 @@ const state = {
   dirty: false,
   notice: "",
   error: "",
+  warning: "",
   previewBytes: null,
   previewImages: [],
   previewPending: false,
   previewReadyAt: "",
   previewGeneration: 0,
   previewTimer: 0,
+  templatePreviewMissingBindings: [],
 };
 
 const itemIndexLabels = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫"];
@@ -427,6 +429,75 @@ function templateDocumentPayloadFromState() {
   };
 }
 
+function clearTemplatePreviewWarning() {
+  state.warning = "";
+  state.templatePreviewMissingBindings = [];
+}
+
+function templatePreviewBlockingMessage(document = state.templateDocument) {
+  const familyLabel = familyDefinition(document?.document_family || SHOGAI_KYOSAI_FAMILY_KEY).label;
+  return `${familyLabel}のプレビューと帳票PDF出力はまだ実行できません。左の PAYLOAD JSON に必須項目を入力してください。`;
+}
+
+function renderTemplatePreviewMissingList(bindings = state.templatePreviewMissingBindings) {
+  if (!bindings.length) {
+    return "";
+  }
+  return bindings
+    .map(
+      (binding) => `
+        <li>
+          <span>${escapeHtml(binding.description)}</span>
+          <code>${escapeHtml(binding.key)}</code>
+        </li>
+      `,
+    )
+    .join("");
+}
+
+function renderTemplatePayloadWarningMarkup() {
+  if (!state.templatePreviewMissingBindings.length) {
+    return "";
+  }
+  return `
+    <div class="template-warning-card" aria-live="polite">
+      <strong>プレビュー前に入力が必要です</strong>
+      <p>次の必須項目を PAYLOAD JSON に入れると、右のプレビューと帳票PDF出力を再開できます。</p>
+      <ul class="template-warning-list">
+        ${renderTemplatePreviewMissingList()}
+      </ul>
+    </div>
+  `;
+}
+
+function applyTemplatePreviewWarning(missingBindings, document = state.templateDocument) {
+  state.warning = templatePreviewBlockingMessage(document);
+  state.templatePreviewMissingBindings = missingBindings.map((binding) => ({
+    key: binding.key,
+    description: binding.description,
+  }));
+}
+
+function updateTemplatePreviewWarningDom() {
+  document.querySelector("#template-preview-warning-flash")?.replaceChildren();
+  const flashHost = document.querySelector("#template-preview-warning-flash");
+  if (flashHost) {
+    flashHost.innerHTML = state.warning
+      ? `<div class="flash flash--warning">${escapeHtml(state.warning)}</div>`
+      : "";
+  }
+
+  const cardHost = document.querySelector("#template-payload-warning");
+  if (cardHost) {
+    cardHost.innerHTML = renderTemplatePayloadWarningMarkup();
+  }
+
+  const downloadButton = document.querySelector("#download-notice-pdf-button");
+  if (downloadButton && (boot.view === "template-edit" || boot.view === "template-print")) {
+    downloadButton.disabled = state.templatePreviewMissingBindings.length > 0;
+  }
+}
+
 function selectedIndexFamily() {
   return normalizeFamilyKey(state.activeFamily || boot.familyTab || ISSUE_FAMILY_KEY);
 }
@@ -647,6 +718,25 @@ async function api(path, options = {}) {
   return response.text();
 }
 
+async function apiBinary(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  let body = options.body;
+  if (body && !(body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+    body = JSON.stringify(body);
+  }
+  const response = await fetch(path, {
+    ...options,
+    headers,
+    body,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+  return response.arrayBuffer();
+}
+
 function renderLoading(title, copy) {
   app.innerHTML = `
     <main class="shell shell--center">
@@ -865,12 +955,19 @@ function renderPdfPreviewMarkup({
   downloadLabel = "PDFを出力",
   previewAriaLabel = "PDF プレビュー",
   previewAltPrefix = "PDFプレビュー",
+  placeholderMarkup = "",
+  statusText = "",
+  downloadDisabled = false,
 } = {}) {
-  const previewStatus = state.previewPending
-    ? "PDF を組版中…"
-    : state.previewReadyAt
-      ? `更新済み ${escapeHtml(state.previewReadyAt)}`
-      : "保存前でも右で案内PDFを確認できます";
+  const previewStatus =
+    statusText ||
+    (state.previewPending
+      ? "PDF を組版中…"
+      : state.previewReadyAt
+        ? `更新済み ${escapeHtml(state.previewReadyAt)}`
+        : "保存前でも右で案内PDFを確認できます");
+  const resolvedPlaceholderMarkup =
+    placeholderMarkup || `<p>${escapeHtml(emptyCopy || "ここに生成済みのPDFが表示されます。")}</p>`;
 
   return `
     <div class="preview-heading">
@@ -880,7 +977,7 @@ function renderPdfPreviewMarkup({
     <div class="pdf-stage">
       <div id="notice-preview-pages" class="pdf-preview-pages" aria-label="${escapeHtml(previewAriaLabel)}">${renderPreviewPagesMarkup(previewAltPrefix)}</div>
       <div class="pdf-stage-placeholder ${state.previewImages.length ? "is-hidden" : ""}" id="notice-preview-placeholder">
-        <p>${escapeHtml(emptyCopy || "ここに生成済みのPDFが表示されます。")}</p>
+        ${resolvedPlaceholderMarkup}
       </div>
       <div class="pdf-stage-overlay ${state.previewPending ? "is-visible" : ""}" id="notice-preview-overlay">PDF を生成しています…</div>
     </div>
@@ -888,7 +985,7 @@ function renderPdfPreviewMarkup({
       <span class="preview-status" id="notice-preview-status">${previewStatus}</span>
       <div class="preview-actions">
         <button class="ghost-button" type="button" id="refresh-preview-button">再生成</button>
-        <button class="primary-button" type="button" id="download-notice-pdf-button">${escapeHtml(downloadLabel)}</button>
+        <button class="primary-button" type="button" id="download-notice-pdf-button" ${downloadDisabled ? "disabled" : ""}>${escapeHtml(downloadLabel)}</button>
       </div>
     </div>
   `;
@@ -906,6 +1003,15 @@ function renderNoticePreviewMarkup() {
 }
 
 function renderTemplateDocumentPreviewMarkup() {
+  const previewBlocked = state.templatePreviewMissingBindings.length > 0;
+  const placeholderMarkup = previewBlocked
+    ? `
+        <p>左の PAYLOAD JSON に必須項目を入力すると、ここに生成済みの農作業傷害共済 PDF を表示できます。</p>
+        <ul class="template-warning-list template-warning-list--preview">
+          ${renderTemplatePreviewMissingList()}
+        </ul>
+      `
+    : "";
   return renderPdfPreviewMarkup({
     title: "帳票プレビュー",
     badge: "SVG bind",
@@ -913,6 +1019,9 @@ function renderTemplateDocumentPreviewMarkup() {
     downloadLabel: "帳票PDFを出力",
     previewAriaLabel: "農作業傷害共済 PDF プレビュー",
     previewAltPrefix: "農作業傷害共済プレビュー",
+    placeholderMarkup,
+    statusText: previewBlocked ? "必須項目を入力するとプレビューを生成できます" : "",
+    downloadDisabled: previewBlocked,
   });
 }
 
@@ -1454,6 +1563,7 @@ function renderTemplateDocumentEditor(skipPreview = false) {
       </div>
 
       ${state.error ? `<div class="flash flash--error">${escapeHtml(state.error)}</div>` : ""}
+      <div id="template-preview-warning-flash">${state.warning ? `<div class="flash flash--warning">${escapeHtml(state.warning)}</div>` : ""}</div>
       ${state.notice ? `<div class="flash flash--info">${escapeHtml(state.notice)}</div>` : ""}
 
       <section class="workspace editor-layout editor-layout--template">
@@ -1489,10 +1599,11 @@ function renderTemplateDocumentEditor(skipPreview = false) {
             <div class="card-header">
               <div>
                 <h2 class="card-title">JSON 入力</h2>
-                <p class="card-copy">保存時は JSON 構文だけ見ます。必須キー不足はプレビュー/PDF 生成時に検知します。</p>
+                <p class="card-copy">保存時は JSON 構文だけ見ます。必須項目が足りない間は、右のプレビューと帳票PDF出力を止めて不足項目を案内します。</p>
               </div>
               <button class="ghost-button" type="button" id="reset-template-payload-button">初期JSONに戻す</button>
             </div>
+            <div id="template-payload-warning">${renderTemplatePayloadWarningMarkup()}</div>
             <div class="field field--wide">
               <label>PAYLOAD JSON</label>
               <textarea id="template-document-payload" class="json-editor" spellcheck="false">${escapeHtml(state.templatePayloadText)}</textarea>
@@ -1586,6 +1697,9 @@ function updatePreviewDom() {
   const placeholder = document.querySelector("#notice-preview-placeholder");
   const overlay = document.querySelector("#notice-preview-overlay");
   const status = document.querySelector("#notice-preview-status");
+  const templatePreviewBlocked =
+    (boot.view === "template-edit" || boot.view === "template-print") &&
+    state.templatePreviewMissingBindings.length > 0;
 
   if (pages) {
     pages.innerHTML = renderPreviewPagesMarkup();
@@ -1599,10 +1713,13 @@ function updatePreviewDom() {
   if (status) {
     status.textContent = state.previewPending
       ? "PDF を組版中…"
-      : state.previewReadyAt
-        ? `更新済み ${state.previewReadyAt}`
-        : "保存前でも右で案内PDFを確認できます";
+      : templatePreviewBlocked
+        ? "必須項目を入力するとプレビューを生成できます"
+        : state.previewReadyAt
+          ? `更新済み ${state.previewReadyAt}`
+          : "保存前でも右で案内PDFを確認できます";
   }
+  updateTemplatePreviewWarningDom();
 }
 
 async function rasterizePreview(bytes) {
@@ -1612,6 +1729,14 @@ async function rasterizePreview(bytes) {
     method: "POST",
     body: formData,
   });
+}
+
+async function fetchTemplateDocumentPreviewImages(templateDocumentId = state.templateDocument?.id || boot.templateDocumentId) {
+  return api(`/api/template-documents/${encodeURIComponent(templateDocumentId)}/preview-images`);
+}
+
+async function fetchTemplateDocumentPdfBytes(templateDocumentId = state.templateDocument?.id || boot.templateDocumentId) {
+  return apiBinary(`/api/template-documents/${encodeURIComponent(templateDocumentId)}/print-pdf`);
 }
 
 function schedulePreview(reason = "") {
@@ -1639,19 +1764,82 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
     return;
   }
 
+  const isTemplatePreview = boot.view === "template-edit" || boot.view === "template-print";
   state.previewPending = true;
   updatePreviewDom();
   const generation = ++state.previewGeneration;
 
   try {
-    const { bytes } =
-      boot.view === "template-edit" || boot.view === "template-print"
-        ? await buildTemplateDocumentPdfDocument(state.templateDocument, parseTemplatePayloadText())
-        : await buildNoticePdfDocument(state.issue, state.blocks, state.paperFontScale);
+    let bytes;
+    if (isTemplatePreview) {
+      const payload = parseTemplatePayloadText();
+      if (boot.view === "template-edit" && state.dirty) {
+        const saved = await saveTemplateDocumentEditor({
+          renderBefore: false,
+          renderAfter: false,
+          noticeMessage: "",
+          clearNotice: true,
+        });
+        if (!saved) {
+          state.previewPending = false;
+          renderTemplateDocumentEditor(true);
+          return;
+        }
+      }
+      const missingBindings = missingTemplatePayloadKeys(
+        state.templateDocument.document_family,
+        state.templateDocument.template_key,
+        payload,
+      );
+      if (missingBindings.length) {
+        if (generation !== state.previewGeneration) {
+          return;
+        }
+        applyTemplatePreviewWarning(missingBindings, state.templateDocument);
+        clearPreviewErrorMessage();
+        state.previewPending = false;
+        state.previewBytes = null;
+        state.previewImages = [];
+        state.previewReadyAt = "";
+        if (boot.view === "template-edit") {
+          renderTemplateDocumentEditor(true);
+        } else {
+          renderTemplateDocumentPrintPage(true);
+        }
+        return;
+      }
+      clearTemplatePreviewWarning();
+      const preview = await fetchTemplateDocumentPreviewImages();
+      if (generation !== state.previewGeneration) {
+        return;
+      }
+      state.previewBytes = null;
+      state.previewImages = Array.isArray(preview.images) ? preview.images : [];
+      state.previewPending = false;
+      state.previewReadyAt = new Date().toLocaleTimeString("ja-JP", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+      clearPreviewErrorMessage();
+      updatePreviewDom();
+
+      if (forceDownload) {
+        const pdfBytes = await fetchTemplateDocumentPdfBytes();
+        if (generation !== state.previewGeneration) {
+          return;
+        }
+        downloadBytes(pdfBytes, currentPdfFileName());
+      }
+      return;
+    } else {
+      ({ bytes } = await buildNoticePdfDocument(state.issue, state.blocks, state.paperFontScale));
+    }
     if (generation !== state.previewGeneration) {
       return;
     }
 
+    clearTemplatePreviewWarning();
     state.previewBytes = bytes;
     const preview = await rasterizePreview(bytes);
     if (generation !== state.previewGeneration) {
@@ -1674,6 +1862,7 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
     if (generation !== state.previewGeneration) {
       return;
     }
+    clearTemplatePreviewWarning();
     state.previewPending = false;
     state.previewImages = [];
     state.error = `プレビュー生成に失敗しました: ${error.message}`;
@@ -1713,6 +1902,48 @@ function currentPdfFileName() {
 }
 
 async function downloadNoticePdf() {
+  if (state.templateDocument) {
+    let payload;
+    try {
+      payload = parseTemplatePayloadText();
+    } catch (error) {
+      clearTemplatePreviewWarning();
+      state.error = error.message;
+      renderTemplateDocumentEditor(true);
+      return;
+    }
+    if (state.dirty) {
+      const saved = await saveTemplateDocumentEditor({
+        renderBefore: false,
+        renderAfter: false,
+        noticeMessage: "",
+        clearNotice: true,
+      });
+      if (!saved) {
+        renderTemplateDocumentEditor(true);
+        return;
+      }
+    }
+    const missingBindings = missingTemplatePayloadKeys(
+      state.templateDocument.document_family,
+      state.templateDocument.template_key,
+      payload,
+    );
+    if (missingBindings.length) {
+      applyTemplatePreviewWarning(missingBindings, state.templateDocument);
+      renderTemplateDocumentEditor(true);
+      return;
+    }
+    try {
+      state.error = "";
+      const bytes = await fetchTemplateDocumentPdfBytes();
+      downloadBytes(bytes, currentPdfFileName());
+    } catch (error) {
+      state.error = `帳票PDFの出力に失敗しました: ${error.message}`;
+      renderTemplateDocumentEditor(true);
+    }
+    return;
+  }
   if (state.previewBytes) {
     downloadBytes(state.previewBytes, currentPdfFileName());
     return;
@@ -2068,6 +2299,7 @@ function bindTemplateDocumentEvents() {
     }
     state.templateDocument.title = event.currentTarget.value;
     markDirty();
+    schedulePreview("template-title");
   });
 
   document.querySelector("#template-document-payload")?.addEventListener("input", (event) => {
@@ -2212,6 +2444,7 @@ async function loadEditor() {
   state.loading = true;
   state.error = "";
   state.notice = "";
+  clearTemplatePreviewWarning();
   renderLoading("編集画面を読込中です", "対象の号と block 群を取得しています。");
   try {
     const [meta] = await Promise.all([api("/api/meta"), loadIssueDocument()]);
@@ -2250,6 +2483,7 @@ async function loadTemplateDocumentEditor() {
   state.loading = true;
   state.error = "";
   state.notice = "";
+  clearTemplatePreviewWarning();
   renderLoading("帳票編集画面を読込中です", "JSON 下書きと SVG テンプレ情報を取得しています。");
   try {
     const [meta] = await Promise.all([api("/api/meta"), loadTemplateDocument()]);
@@ -2269,6 +2503,7 @@ async function loadTemplateDocumentEditor() {
 
 async function loadTemplateDocumentPrint() {
   state.loading = true;
+  clearTemplatePreviewWarning();
   renderLoading("印刷紙面を読込中です", "保存済みの帳票データを取得しています。");
   try {
     await loadTemplateDocument();
@@ -2312,7 +2547,12 @@ async function saveEditor() {
   }
 }
 
-async function saveTemplateDocumentEditor() {
+async function saveTemplateDocumentEditor({
+  renderBefore = true,
+  renderAfter = true,
+  noticeMessage = "保存しました。",
+  clearNotice = true,
+} = {}) {
   if (!boot.templateDocumentId || state.saving || !state.templateDocument) {
     return false;
   }
@@ -2320,6 +2560,7 @@ async function saveTemplateDocumentEditor() {
   try {
     payload = parseTemplatePayloadText();
   } catch (error) {
+    clearTemplatePreviewWarning();
     state.error = error.message;
     renderTemplateDocumentEditor(true);
     return false;
@@ -2327,8 +2568,14 @@ async function saveTemplateDocumentEditor() {
 
   state.saving = true;
   state.error = "";
-  state.notice = "";
-  renderTemplateDocumentEditor();
+  if (clearNotice) {
+    state.notice = "";
+  }
+  if (renderBefore) {
+    renderTemplateDocumentEditor(true);
+  } else {
+    updateSaveStateText();
+  }
   try {
     const response = await api(`/api/template-documents/${boot.templateDocumentId}`, {
       method: "PUT",
@@ -2348,14 +2595,20 @@ async function saveTemplateDocumentEditor() {
       .concat(state.templateDocument)
       .sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
     state.dirty = false;
-    state.notice = "保存しました。";
+    state.notice = noticeMessage;
+    updateSaveStateText();
     return true;
   } catch (error) {
     state.error = error.message;
+    updateSaveStateText();
     return false;
   } finally {
     state.saving = false;
-    renderTemplateDocumentEditor();
+    if (renderAfter) {
+      renderTemplateDocumentEditor();
+    } else {
+      updateSaveStateText();
+    }
   }
 }
 

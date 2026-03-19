@@ -72,6 +72,10 @@ static EMBEDDED_PAPER_FONT_TITLE_BYTES: &[u8] = include_bytes!(concat!(
   env!("CARGO_MANIFEST_DIR"),
   "/bundled-assets/fonts/NotoSansJP-Bold.ttf"
 ));
+static EMBEDDED_TEMPLATE_DOCUMENT_SVG_SHOGAI_KYOSAI: &str = include_str!(concat!(
+  env!("CARGO_MANIFEST_DIR"),
+  "/20260319-templ-shogai-kyosai.svg"
+));
 
 /* trait  ************************************************************************************************/
 
@@ -396,6 +400,12 @@ struct TemplateDocumentDescriptor {
   template_version: &'static str,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TemplateBindingDefinition {
+  key: &'static str,
+  description: &'static str,
+}
+
 /* unsafe impl standard traits  **************************************************************************/
 
 /* impl standard traits  *********************************************************************************/
@@ -636,6 +646,126 @@ fn default_template_document_payload(descriptor: TemplateDocumentDescriptor) -> 
   }
 }
 
+fn template_document_bindings(
+  descriptor: TemplateDocumentDescriptor,
+) -> &'static [TemplateBindingDefinition] {
+  const SHOGAI_KYOSAI_JOIN_RENEWAL_BINDINGS: [TemplateBindingDefinition; 7] = [
+    TemplateBindingDefinition {
+      key: "contract_holder",
+      description: "契約者名",
+    },
+    TemplateBindingDefinition {
+      key: "age_previous",
+      description: "応答日前年齢",
+    },
+    TemplateBindingDefinition {
+      key: "age_current",
+      description: "契約応答日時年齢",
+    },
+    TemplateBindingDefinition {
+      key: "ending_disability",
+      description: "終了契約の死亡・後遺症傷害",
+    },
+    TemplateBindingDefinition {
+      key: "ending_medical",
+      description: "終了契約の治療共済金額",
+    },
+    TemplateBindingDefinition {
+      key: "ending_date",
+      description: "終了契約の契約日",
+    },
+    TemplateBindingDefinition {
+      key: "ending_premium",
+      description: "終了契約の共済掛金",
+    },
+  ];
+
+  match (descriptor.document_family, descriptor.template_key) {
+    (TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI, TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL) => {
+      &SHOGAI_KYOSAI_JOIN_RENEWAL_BINDINGS
+    }
+    _ => &[],
+  }
+}
+
+fn template_document_svg_source(
+  descriptor: TemplateDocumentDescriptor,
+) -> std::result::Result<&'static str, (StatusCode, String)> {
+  match (descriptor.document_family, descriptor.template_key) {
+    (TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI, TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL) => {
+      Ok(EMBEDDED_TEMPLATE_DOCUMENT_SVG_SHOGAI_KYOSAI)
+    }
+    _ => Err(api_bad_request(format!(
+      "unsupported template document `{}/{}`",
+      descriptor.document_family, descriptor.template_key
+    ))),
+  }
+}
+
+fn template_payload_display_value(payload: &serde_json::Value, key: &str) -> String {
+  payload
+    .get(key)
+    .and_then(|value| value.as_str())
+    .unwrap_or_default()
+    .replace("\r\n", "\n")
+}
+
+fn missing_template_document_bindings(
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> Vec<TemplateBindingDefinition> {
+  template_document_bindings(descriptor)
+    .iter()
+    .copied()
+    .filter(|binding| {
+      template_payload_display_value(payload, binding.key)
+        .trim()
+        .is_empty()
+    })
+    .collect()
+}
+
+fn html_escape_text(value: &str) -> String {
+  value
+    .replace('&', "&amp;")
+    .replace('<', "&lt;")
+    .replace('>', "&gt;")
+    .replace('"', "&quot;")
+    .replace('\'', "&#39;")
+}
+
+fn xml_escape_text(value: &str) -> String {
+  value
+    .replace('&', "&amp;")
+    .replace('<', "&lt;")
+    .replace('>', "&gt;")
+}
+
+fn render_template_document_svg_markup(
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> std::result::Result<String, (StatusCode, String)> {
+  let missing = missing_template_document_bindings(descriptor, payload);
+  if !missing.is_empty() {
+    let summary = missing
+      .into_iter()
+      .map(|binding| format!("{} ({})", binding.description, binding.key))
+      .collect::<Vec<_>>()
+      .join(", ");
+    return Err(api_conflict(format!(
+      "帳票の生成に必要な項目が不足しています: {summary}"
+    )));
+  }
+
+  let mut svg = template_document_svg_source(descriptor)?.to_string();
+  for binding in template_document_bindings(descriptor) {
+    let token = format!("${}", binding.key);
+    let value = xml_escape_text(&template_payload_display_value(payload, binding.key));
+    svg = svg.replace(&token, &value);
+  }
+  Ok(svg)
+}
+
 fn template_payload_string_value(payload: &serde_json::Value, key: &str) -> String {
   payload
     .get(key)
@@ -841,6 +971,36 @@ fn remove_issue_runtime_artifacts(runtime_dir: &Path, issue_id: &str) {
   let _ = fs::remove_dir_all(issue_generated_dir(runtime_dir, issue_id));
 }
 
+fn template_document_generated_dir(runtime_dir: &Path, template_document_id: &str) -> PathBuf {
+  runtime_dir
+    .join("generated")
+    .join("template-documents")
+    .join(template_document_id)
+}
+
+fn sanitize_pdf_download_name(name: &str, fallback: &str) -> String {
+  let value = name
+    .trim()
+    .chars()
+    .map(|ch| {
+      if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+        '_'
+      } else {
+        ch
+      }
+    })
+    .collect::<String>()
+    .trim()
+    .trim_matches('.')
+    .to_string();
+
+  if value.is_empty() {
+    fallback.to_string()
+  } else {
+    value
+  }
+}
+
 fn app_shell(
   view: &str,
   issue_id: Option<&str>,
@@ -863,6 +1023,246 @@ fn app_shell(
 
   Html(format!(
     "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{page_title}</title><link rel=\"stylesheet\" href=\"/assets/app.css?v={asset_version}\"></head><body data-print-mode=\"{print_attr}\"><div id=\"app\" data-view=\"{view}\" data-issue-id=\"{issue_id_attr}\" data-template-document-id=\"{template_document_id_attr}\" data-family-tab=\"{family_tab_attr}\" data-print-mode=\"{print_attr}\"></div><script type=\"module\" src=\"/assets/app.js?v={asset_version}\"></script></body></html>"
+  ))
+}
+
+fn template_document_print_html(
+  document: &TemplateDocumentDetail,
+  descriptor: TemplateDocumentDescriptor,
+  svg_markup: &str,
+) -> Html<String> {
+  let title = html_escape_text(&document.title);
+  let document_id = html_escape_text(&document.id);
+  let edit_url = format!("/template-documents/{}/edit", document_id);
+  let pdf_api_url = format!("/api/template-documents/{}/print-pdf", document_id);
+  let download_name_json = serde_json::to_string(&format!(
+    "{}.pdf",
+    sanitize_pdf_download_name(document.title.trim(), "template-document")
+  ))
+  .unwrap_or_else(|_| "\"template-document.pdf\"".to_string());
+
+  Html(format!(
+    r#"<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{title}</title>
+    <style>
+      @page {{
+        size: A4;
+        margin: 0;
+      }}
+      :root {{
+        color-scheme: light;
+      }}
+      * {{
+        box-sizing: border-box;
+      }}
+      html,
+      body {{
+        margin: 0;
+        padding: 0;
+        background: #eef2f7;
+        font-family: "Yu Gothic UI", "Yu Gothic", "Hiragino Sans", sans-serif;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }}
+      .template-print-shell {{
+        min-height: 100vh;
+        padding: 18px;
+      }}
+      .template-print-toolbar {{
+        width: min(100%, 1180px);
+        margin: 0 auto 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }}
+      .template-print-toolbar h1 {{
+        margin: 0;
+        font-size: 16px;
+      }}
+      .template-print-toolbar p {{
+        margin: 4px 0 0;
+        color: #5b6470;
+        font-size: 13px;
+      }}
+      .template-print-actions {{
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }}
+      .template-print-actions a,
+      .template-print-actions button {{
+        border: 1px solid rgba(76, 101, 153, 0.18);
+        border-radius: 999px;
+        background: #fff;
+        color: #1c2740;
+        padding: 9px 14px;
+        text-decoration: none;
+        font: inherit;
+        cursor: pointer;
+      }}
+      .template-print-actions button {{
+        background: linear-gradient(180deg, #6f8ff5 0%, #4f73e3 100%);
+        color: #fff;
+        border-color: rgba(68, 99, 190, 0.45);
+      }}
+      .template-print-stage {{
+        width: min(100%, 1180px);
+        margin: 0 auto;
+        display: flex;
+        justify-content: center;
+      }}
+      .template-print-paper {{
+        width: 210mm;
+        min-height: 297mm;
+        background: #fff;
+        box-shadow: 0 18px 50px rgba(34, 47, 78, 0.14);
+      }}
+      .template-print-paper svg {{
+        display: block;
+        width: 210mm;
+        height: 297mm;
+      }}
+      @media print {{
+        html,
+        body {{
+          background: #fff;
+        }}
+        .template-print-shell {{
+          padding: 0;
+        }}
+        .template-print-toolbar {{
+          display: none;
+        }}
+        .template-print-stage,
+        .template-print-paper {{
+          width: 210mm;
+          margin: 0;
+        }}
+        .template-print-paper {{
+          box-shadow: none;
+        }}
+      }}
+    </style>
+  </head>
+  <body>
+    <main class="template-print-shell">
+      <header class="template-print-toolbar">
+        <div>
+          <h1>{title}</h1>
+          <p>{family_label} / テンプレ版 {template_version}</p>
+        </div>
+        <div class="template-print-actions">
+          <a href="{edit_url}">編集へ戻る</a>
+          <button type="button" id="download-template-pdf">帳票PDFを出力</button>
+        </div>
+      </header>
+      <section class="template-print-stage">
+        <article class="template-print-paper">
+          {svg_markup}
+        </article>
+      </section>
+    </main>
+    <script>
+      const downloadButton = document.getElementById("download-template-pdf");
+      if (downloadButton) {{
+        downloadButton.addEventListener("click", async () => {{
+          downloadButton.disabled = true;
+          try {{
+            const response = await fetch("{pdf_api_url}");
+            if (!response.ok) {{
+              throw new Error(await response.text() || `HTTP ${{response.status}}`);
+            }}
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = {download_name_json};
+            document.body.append(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }} catch (error) {{
+            window.alert(error.message || "帳票PDFを出力できませんでした。");
+          }} finally {{
+            downloadButton.disabled = false;
+          }}
+        }});
+      }}
+    </script>
+  </body>
+</html>"#,
+    family_label = html_escape_text("農作業傷害共済"),
+    template_version = html_escape_text(descriptor.template_version),
+  ))
+}
+
+fn template_document_error_html(title: &str, message: &str, edit_url: &str) -> Html<String> {
+  Html(format!(
+    r#"<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{title}</title>
+    <style>
+      html, body {{
+        margin: 0;
+        min-height: 100%;
+        background: #f4f6fa;
+        font-family: "Yu Gothic UI", "Yu Gothic", "Hiragino Sans", sans-serif;
+      }}
+      main {{
+        width: min(100%, 880px);
+        margin: 0 auto;
+        padding: 28px 20px;
+      }}
+      .error-card {{
+        border-radius: 22px;
+        border: 1px solid rgba(196, 58, 43, 0.14);
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 18px 48px rgba(31, 45, 75, 0.08);
+        padding: 24px 26px;
+      }}
+      .error-card h1 {{
+        margin: 0 0 8px;
+        font-size: 22px;
+      }}
+      .error-card p {{
+        margin: 0 0 16px;
+        color: #5b6470;
+        line-height: 1.7;
+      }}
+      .error-card a {{
+        display: inline-flex;
+        align-items: center;
+        min-height: 40px;
+        padding: 0 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(76, 101, 153, 0.18);
+        background: #fff;
+        color: #1c2740;
+        text-decoration: none;
+      }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="error-card">
+        <h1>{title}</h1>
+        <p>{message}</p>
+        <a href="{edit_url}">編集へ戻る</a>
+      </section>
+    </main>
+  </body>
+</html>"#,
+    title = html_escape_text(title),
+    message = html_escape_text(message),
+    edit_url = html_escape_text(edit_url),
   ))
 }
 
@@ -1401,7 +1801,7 @@ fn issue_generated_dir(runtime_dir: &Path, issue_id: &str) -> PathBuf {
 }
 
 #[allow(dead_code)]
-fn render_issue_pdf_file(
+fn render_print_page_pdf_file(
   browser_cmd: String,
   print_url: String,
   browser_output_path: PathBuf,
@@ -1483,7 +1883,7 @@ async fn generate_issue_pdf(
     let browser_cmd = browser_cmd.clone();
     let print_url = print_url.clone();
     let browser_output_path_native = browser_output_path_native.clone();
-    move || render_issue_pdf_file(browser_cmd, print_url, browser_output_path_native)
+    move || render_print_page_pdf_file(browser_cmd, print_url, browser_output_path_native)
   })
   .await
   .map_err(|err| api_internal(format!("failed to join PDF worker: {err}")))?
@@ -1510,6 +1910,135 @@ async fn generate_issue_pdf(
     .map_err(|err| api_internal(err.to_string()))?;
 
   Ok(bytes)
+}
+
+async fn generate_template_document_pdf(
+  state: &AppState,
+  template_document_id: &str,
+) -> std::result::Result<Vec<u8>, (StatusCode, String)> {
+  let Some(browser_cmd) = &state.pdf_browser_cmd else {
+    return Err(api_internal(
+      "google-chrome/chromium is required for 農作業傷害共済 の印刷とPDF出力 but was not found",
+    ));
+  };
+
+  let document = fetch_template_document(&state.client, template_document_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .ok_or_else(|| api_not_found("template document not found"))?;
+  let descriptor = resolve_template_document_descriptor(
+    &document.document.document_family,
+    &document.document.template_key,
+  )?;
+  let missing = missing_template_document_bindings(descriptor, &document.document.payload);
+  if !missing.is_empty() {
+    let summary = missing
+      .into_iter()
+      .map(|binding| format!("{} ({})", binding.description, binding.key))
+      .collect::<Vec<_>>()
+      .join(", ");
+    return Err(api_conflict(format!(
+      "帳票の生成に必要な項目が不足しています: {summary}"
+    )));
+  }
+
+  let output_dir = template_document_generated_dir(&state.runtime_dir, template_document_id);
+  fs::create_dir_all(&output_dir).map_err(|err| api_internal(err.to_string()))?;
+  let file_name = format!("template-document-{}.pdf", unique_upload_stem());
+  let output_path = output_dir.join(&file_name);
+  let browser_output_path_native = if browser_cmd.ends_with(".exe") {
+    windows_temp_dir()
+      .unwrap_or_else(|| output_dir.clone())
+      .join(&file_name)
+  } else {
+    output_path.clone()
+  };
+  let print_url = format!(
+    "{}/template-documents/{template_document_id}/print",
+    state.loopback_base_url
+  );
+  tokio::task::spawn_blocking({
+    let browser_cmd = browser_cmd.clone();
+    let print_url = print_url.clone();
+    let browser_output_path_native = browser_output_path_native.clone();
+    move || render_print_page_pdf_file(browser_cmd, print_url, browser_output_path_native)
+  })
+  .await
+  .map_err(|err| api_internal(format!("failed to join template PDF worker: {err}")))?
+  .map_err(api_internal)?;
+
+  let bytes = fs::read(&browser_output_path_native).map_err(|err| api_internal(err.to_string()))?;
+  if browser_output_path_native != output_path {
+    fs::copy(&browser_output_path_native, &output_path)
+      .map_err(|err| api_internal(err.to_string()))?;
+  }
+
+  Ok(bytes)
+}
+
+fn rasterize_pdf_bytes_to_images(
+  state: &AppState,
+  pdf_bytes: &[u8],
+) -> std::result::Result<Vec<String>, (StatusCode, String)> {
+  let Some(pdftoppm_cmd) = &state.pdftoppm_cmd else {
+    return Err(api_internal(
+      "pdftoppm is required for preview rendering but was not found",
+    ));
+  };
+
+  let job_dir = preview_render_root(&state.runtime_dir).join(unique_upload_stem());
+  fs::create_dir_all(&job_dir).map_err(|err| api_internal(err.to_string()))?;
+  let input_pdf = job_dir.join("preview.pdf");
+  let output_prefix = job_dir.join("page");
+  fs::write(&input_pdf, pdf_bytes).map_err(|err| api_internal(err.to_string()))?;
+
+  let status = ProcessCommand::new(pdftoppm_cmd)
+    .arg("-png")
+    .arg("-r")
+    .arg(NOTICE_PREVIEW_RENDER_DPI.to_string())
+    .arg(&input_pdf)
+    .arg(&output_prefix)
+    .status()
+    .map_err(|err| api_internal(format!("failed to launch pdftoppm: {err}")))?;
+
+  if !status.success() {
+    let _ = fs::remove_dir_all(&job_dir);
+    return Err(api_internal(
+      "pdftoppm failed while generating preview images",
+    ));
+  }
+
+  let mut pages = fs::read_dir(&job_dir)
+    .map_err(|err| api_internal(err.to_string()))?
+    .filter_map(|entry| entry.ok())
+    .map(|entry| entry.path())
+    .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("png"))
+    .collect::<Vec<_>>();
+  pages.sort_by_key(|path| {
+    path
+      .file_stem()
+      .and_then(|stem| stem.to_str())
+      .and_then(|stem| stem.rsplit('-').next())
+      .and_then(|suffix| suffix.parse::<u32>().ok())
+      .unwrap_or(0)
+  });
+
+  if pages.is_empty() {
+    let _ = fs::remove_dir_all(&job_dir);
+    return Err(api_internal("preview rasterizer did not produce images"));
+  }
+
+  let images = pages
+    .into_iter()
+    .map(|path| {
+      fs::read(&path)
+        .map(|bytes| format!("data:image/png;base64,{}", BASE64_STANDARD.encode(bytes)))
+        .map_err(|err| api_internal(format!("failed to read {}: {err}", path.display())))
+    })
+    .collect::<std::result::Result<Vec<_>, _>>()?;
+
+  let _ = fs::remove_dir_all(&job_dir);
+  Ok(images)
 }
 
 async fn fetch_issue_document(
@@ -1963,15 +2492,75 @@ async fn template_document_edit_page(
 }
 
 async fn template_document_print_page(
+  State(state): State<Arc<AppState>>,
   RoutePath(template_document_id): RoutePath<String>,
 ) -> impl IntoResponse {
-  app_shell(
-    "template-print",
-    None,
-    Some(&template_document_id),
-    true,
-    Some(TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI),
-  )
+  let edit_url = format!("/template-documents/{template_document_id}/edit");
+  let Some(_browser_cmd) = &state.pdf_browser_cmd else {
+    return (
+      StatusCode::CONFLICT,
+      template_document_error_html(
+        "農作業傷害共済を印刷できません",
+        "google-chrome または chromium が見つからないため、この帳票の正本印刷画面を開けません。JOKAI_PDF_BROWSER_CMD を含む Chrome 系の設定を確認してください。",
+        &edit_url,
+      ),
+    )
+      .into_response();
+  };
+
+  let document = match fetch_template_document(&state.client, &template_document_id).await {
+    Ok(Some(document)) => document,
+    Ok(None) => {
+      return (
+        StatusCode::NOT_FOUND,
+        template_document_error_html(
+          "帳票が見つかりません",
+          "指定された帳票は存在しません。",
+          &edit_url,
+        ),
+      )
+        .into_response();
+    }
+    Err(err) => {
+      return (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        template_document_error_html(
+          "帳票印刷画面の準備に失敗しました",
+          &format!("template document の読込に失敗しました: {err}"),
+          &edit_url,
+        ),
+      )
+        .into_response();
+    }
+  };
+
+  let descriptor = match resolve_template_document_descriptor(
+    &document.document.document_family,
+    &document.document.template_key,
+  ) {
+    Ok(descriptor) => descriptor,
+    Err((status, message)) => {
+      return (
+        status,
+        template_document_error_html("帳票印刷画面の準備に失敗しました", &message, &edit_url),
+      )
+        .into_response();
+    }
+  };
+
+  let svg_markup = match render_template_document_svg_markup(descriptor, &document.document.payload)
+  {
+    Ok(svg_markup) => svg_markup,
+    Err((status, message)) => {
+      return (
+        status,
+        template_document_error_html("帳票印刷画面の準備に失敗しました", &message, &edit_url),
+      )
+        .into_response();
+    }
+  };
+
+  template_document_print_html(&document.document, descriptor, &svg_markup).into_response()
 }
 
 async fn healthz() -> impl IntoResponse {
@@ -2043,12 +2632,6 @@ async fn api_preview_rasterize(
   State(state): State<Arc<AppState>>,
   mut multipart: Multipart,
 ) -> ApiResult<PreviewRenderResponse> {
-  let Some(pdftoppm_cmd) = &state.pdftoppm_cmd else {
-    return Err(api_internal(
-      "pdftoppm is required for notice preview rendering but was not found",
-    ));
-  };
-
   let mut pdf_bytes = None;
   while let Some(field) = multipart
     .next_field()
@@ -2068,70 +2651,50 @@ async fn api_preview_rasterize(
   let Some(pdf_bytes) = pdf_bytes else {
     return Err(api_bad_request("preview PDF file is missing"));
   };
-
-  let job_dir = preview_render_root(&state.runtime_dir).join(unique_upload_stem());
-  fs::create_dir_all(&job_dir).map_err(|err| api_internal(err.to_string()))?;
-  let input_pdf = job_dir.join("preview.pdf");
-  let output_prefix = job_dir.join("page");
-  fs::write(&input_pdf, pdf_bytes.as_ref()).map_err(|err| api_internal(err.to_string()))?;
-
-  let command = pdftoppm_cmd.clone();
-  let input_pdf_for_task = input_pdf.clone();
-  let output_prefix_for_task = output_prefix.clone();
-  tokio::task::spawn_blocking(move || {
-    ProcessCommand::new(command)
-      .arg("-png")
-      .arg("-r")
-      .arg(NOTICE_PREVIEW_RENDER_DPI.to_string())
-      .arg(&input_pdf_for_task)
-      .arg(&output_prefix_for_task)
-      .status()
-  })
-  .await
-  .map_err(|err| api_internal(format!("failed to join preview rasterizer: {err}")))?
-  .map_err(|err| api_internal(format!("failed to launch pdftoppm: {err}")))
-  .and_then(|status| {
-    if status.success() {
-      Ok(())
-    } else {
-      Err(api_internal(
-        "pdftoppm failed while generating preview images",
-      ))
-    }
-  })?;
-
-  let mut pages = fs::read_dir(&job_dir)
-    .map_err(|err| api_internal(err.to_string()))?
-    .filter_map(|entry| entry.ok())
-    .map(|entry| entry.path())
-    .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("png"))
-    .collect::<Vec<_>>();
-  pages.sort_by_key(|path| {
-    path
-      .file_stem()
-      .and_then(|stem| stem.to_str())
-      .and_then(|stem| stem.rsplit('-').next())
-      .and_then(|suffix| suffix.parse::<u32>().ok())
-      .unwrap_or(0)
-  });
-
-  if pages.is_empty() {
-    let _ = fs::remove_dir_all(&job_dir);
-    return Err(api_internal("preview rasterizer did not produce images"));
-  }
-
-  let images = pages
-    .into_iter()
-    .map(|path| {
-      fs::read(&path)
-        .map(|bytes| format!("data:image/png;base64,{}", BASE64_STANDARD.encode(bytes)))
-        .map_err(|err| api_internal(format!("failed to read {}: {err}", path.display())))
-    })
-    .collect::<std::result::Result<Vec<_>, _>>()?;
-
-  let _ = fs::remove_dir_all(&job_dir);
-
+  let images = rasterize_pdf_bytes_to_images(&state, pdf_bytes.as_ref())?;
   Ok(Json(PreviewRenderResponse { images }))
+}
+
+async fn api_template_document_preview_images(
+  State(state): State<Arc<AppState>>,
+  RoutePath(template_document_id): RoutePath<String>,
+) -> ApiResult<PreviewRenderResponse> {
+  let pdf_bytes = generate_template_document_pdf(&state, &template_document_id).await?;
+  let images = rasterize_pdf_bytes_to_images(&state, &pdf_bytes)?;
+  Ok(Json(PreviewRenderResponse { images }))
+}
+
+async fn api_template_document_print_pdf(
+  State(state): State<Arc<AppState>>,
+  RoutePath(template_document_id): RoutePath<String>,
+) -> std::result::Result<impl IntoResponse, (StatusCode, String)> {
+  let document = fetch_template_document(&state.client, &template_document_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .ok_or_else(|| api_not_found("template document not found"))?;
+  let file_name = format!(
+    "{}.pdf",
+    sanitize_pdf_download_name(document.document.title.trim(), "template-document")
+  );
+  let bytes = generate_template_document_pdf(&state, &template_document_id).await?;
+  let mut headers = header::HeaderMap::new();
+  headers.insert(
+    header::CONTENT_TYPE,
+    header::HeaderValue::from_static("application/pdf"),
+  );
+  headers.insert(
+    header::CACHE_CONTROL,
+    header::HeaderValue::from_static("no-store"),
+  );
+  headers.insert(
+    header::CONTENT_DISPOSITION,
+    header::HeaderValue::from_str(&format!(
+      "attachment; filename=\"{}\"",
+      sanitize_filename(&file_name)
+    ))
+    .map_err(|err| api_internal(err.to_string()))?,
+  );
+  Ok((headers, bytes))
 }
 
 async fn api_meta(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -3618,6 +4181,14 @@ async fn run_web(args: WebArgs) -> Result<()> {
       get(api_template_document_detail)
         .put(api_template_document_save)
         .delete(api_template_document_delete),
+    )
+    .route(
+      "/api/template-documents/{id}/preview-images",
+      get(api_template_document_preview_images),
+    )
+    .route(
+      "/api/template-documents/{id}/print-pdf",
+      get(api_template_document_print_pdf),
     )
     .route(
       "/api/blocks/{id}/attachments",

@@ -327,3 +327,28 @@
 - 2026-03-19 03:43:18 +0900 [検証開始] 監視エラーファイル正常を確認し、`./watch-run-server.sh` 起動と localhost 動作確認ループへ入る。
 - 2026-03-19 03:47:17 +0900 [検証継続] 修正反映後の再ビルド完了を確認し、`常会案内` と `農作業傷害共済` の両系統を UI 経路で再検証するループを継続。
 - 2026-03-19 03:51:16 +0900 [動作確認] headless Chrome + CDP で `農作業傷害共済` の作成→JSON入力→ライブプレビュー→保存→印刷画面→API保存確認→削除、および `常会案内` の作成→編集プレビュー→印刷画面→削除まで通過。
+- 2026-03-19 09:15:52 +0900 [調査開始] `build-error.txt`・`test-error.txt` と `context/repo-map.md` を再確認し、`農作業傷害共済` の preview 失敗は `template_documents` 系の required binding / default payload / `schedulePreview()` を優先調査する方針で着手。
+- 2026-03-19 09:15:52 +0900 [実データ確認] `GET /api/template-documents/3318dbb7-9630-461a-acf5-d34d3e63bdc2` を確認し、`payload` の required 7 キー `contract_holder`・`age_previous`・`age_current`・`ending_disability`・`ending_medical`・`ending_date`・`ending_premium` がすべて空文字のまま残っていることを確認。
+- 2026-03-19 09:17:51 +0900 [UI確認] 実画面 `/template-documents/3318dbb7-9630-461a-acf5-d34d3e63bdc2/edit` を CDP で確認し、初回表示直後に preview が自動発火している一方で、画面上は flash に raw key 名のエラーが出るだけで、footer status は失敗状態を示さず generic 文言のままなことを確認。
+- 2026-03-19 09:17:51 +0900 [経路切り分け] JSON に required 7 キーを仮入力すると `POST /api/preview-renders` が初めて発火し、PNG プレビュー 1 ページが正常表示された。失敗点は server-side rasterize ではなく browser-side `buildTemplateDocumentPdfDocument()` の required key 検証であると確定。
+- 2026-03-19 09:21:02 +0900 [要件定義] ユーザー要望を「エラー内容から次に何を入力すべきか理解できる UI/文言へ改善」に整理。実装前に、対象範囲・表示場所・required 不足時の preview 挙動・日本語ラベル/入力例の粒度を要件確認する段階へ移行。
+- 2026-03-19 09:22:59 +0900 [要件確定] 改善対象は `農作業傷害共済` の required key 不足エラーのみに限定し、表示は flash に加えて JSON欄直上へも不足項目一覧を出す方針で確定。
+- 2026-03-19 09:22:59 +0900 [要件確定] required 不足時は preview/PDF生成を走らせず warning 表示へ切り替え、文言は「日本語ラベル + raw key 併記」で次の入力行動が分かる形にする方針で確定。
+- 2026-03-19 09:29:54 +0900 [実装] `web-src/main.js` に template preview warning state を追加し、required 不足時は `missingTemplatePayloadKeys()` で browser-side に事前停止、flash + JSON欄直上 + preview placeholder/status へ不足項目を日本語ラベルと raw key 併記で表示するよう変更。
+- 2026-03-19 09:29:54 +0900 [実装] `web-src/app.css` に warning 用スタイルを追加し、required 不足中は `帳票PDFを出力` ボタンを disable、入力完了後は warning DOM をクリアして preview を自動再開するよう調整。
+- 2026-03-19 09:29:54 +0900 [検証] `npm run build` と `cargo fmt` 実行済み。CDP で空 payload 時は `/api/preview-renders` 未発火のまま warning 表示、必須 7 項目入力後は warning 消去・`POST /api/preview-renders` 発火・PNG プレビュー 1 ページ表示・出力ボタン再有効化を確認。
+- 2026-03-19 09:44:00 +0900 [画像比較] ユーザー提示の原稿PNGと生成PDF PNGを比較し、`fill:none + stroke` の枠線が PDF 側で全面消失し、下部注意書きの複数 `tspan` 段落が 1 行へ潰れて赤強調も失われていることを確認。
+- 2026-03-19 09:44:00 +0900 [最小再現] `@pdfme/pdf-lib` の `page.drawSvg()` を Node で直接再現し、stroke-only rect と fill+stroke white rect が描画されず、fill を持つ赤 rect だけ表示されることを確認。`drawSvg` の rect stroke 描画経路自体に不整合があると判断。
+- 2026-03-19 09:44:00 +0900 [最小再現] `@pdfme/pdf-lib/src/api/svg.ts` の text runner が `element.text.trim().replace(/\\s/g, ' ')` で text 内容を平坦化しており、ASCII 2 行 `tspan` でも PDF では 1 行へ連結されることを確認。原稿 SVG の複数 `tspan` 行分け・赤字部分強調は現 renderer では保持されないと判断。
+- 2026-03-19 09:48:57 +0900 [要件定義] `農作業傷害共済` だけ Chrome 印刷HTML + headless Chromium PDF化へ切り替える前提で、既存の `template_documents` edit/print/preview 経路と `src/main.rs` の Chrome 検出・legacy headless 印刷土台を確認。要件論点を「preview を同エンジンへ寄せる範囲」「未保存編集中の扱い」「Chrome 不在時の失敗方針」へ整理。
+- 2026-03-19 09:50:07 +0900 [要件確定] Chrome 切替の基本方針として `農作業傷害共済` の編集プレビュー・印刷画面・帳票PDF出力を Chrome 印刷HTML 由来へ統一し、印刷/出力前は自動保存、正本画面は `/template-documents/{id}/print`、Chrome 不在時は明示エラー停止とする選択を受領。
+- 2026-03-19 09:50:07 +0900 [要件確認] ただし編集プレビューまで同経路へ統一する場合、未保存 JSON を毎回 auto-save して live preview するか、一時 payload をサーバへ送る preview 専用経路を許容するかで実装方式が分岐するため、この一点のみ追加確認が必要と整理。
+- 2026-03-19 09:52:31 +0900 [要件確定] 編集プレビューの live 更新方式も `入力のたびに自動保存し、保存済み draft を headless Chromium で再生成する` 方針で確定。`農作業傷害共済` は SVG帳票系を全面的に Chrome 印刷HTML 経路へ寄せ、重さより正本一致を優先する要件として確定。
+- 2026-03-19 10:02:46 +0900 [実装] `src/main.rs` に template document 用の SVG正本埋め込み、required binding 検証、server-rendered `/template-documents/{id}/print` HTML、headless Chromium PDF helper、`/api/template-documents/{id}/preview-images` と `/api/template-documents/{id}/print-pdf` を追加。
+- 2026-03-19 10:02:46 +0900 [実装] `web-src/main.js` の `template_documents` preview を `drawSvg` 生成から server API 呼び出しへ切り替え、valid JSON 入力時は debounce 後に auto-save → preview-images 再取得の順で動くよう変更。`帳票PDFを出力` も server-side `print-pdf` download へ切り替えた。
+- 2026-03-19 10:02:46 +0900 [検証] `./run-server.sh` を起動して localhost:12040 で loop 検証し、edit 初回表示で `preview-images` 取得、JSON変更後の auto-save 反映、raw SVG 正本の `/template-documents/{id}/print` 表示、`/api/template-documents/{id}/print-pdf` 200 応答、Chrome 正本由来 preview PNG の見た目改善を確認。
+- 2026-03-19 10:21:56 +0900 [codified-context] `codified-context-maintenance` の監査結果に基づき、`AGENTS.md` の `農作業傷害共済` routing を Chromium 正本経路へ更新し、`web-src/template-doc-pdf.js` を旧補助扱いへ降格、`preview-images` / `print-pdf` / `run-server.sh` を repo-wide guidance に追記。
+- 2026-03-19 10:21:56 +0900 [codified-context] `context/repo-map.md` に `run-server.sh` の補足を追加し、調査用の `.tmp-svg-investigation/` と `.tmp-template-preview.png` を durable asset ではない一時物として削除。
+- 2026-03-19 09:33:24 +0900 [調査開始] `build-error.txt`・`test-error.txt`・`watch-run-server.sh`・`watch-run-common.sh`・`run-web.sh` を確認し、watch なしの `./run-server.sh` を最小差分で追加する方針で着手。
+- 2026-03-19 09:33:54 +0900 [実装] `run-server.sh` を追加し、`DATABASE_URL` / `JOKAI_BIND` の既定値は watch 版と揃えたまま、`npm run build` 後に `cargo run -- web ...` を一発実行する構成にした。`chmod +x`・`cargo fmt`・`zsh -n run-server.sh` まで実施。
+- 2026-03-19 09:34:08 +0900 [検証] 変更後 1 秒待機して `build-error.txt`・`test-error.txt`・`clippy-error.txt` を確認し、失敗なしを確認。`build-error-win.txt` は未生成のまま。

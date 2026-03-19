@@ -100,11 +100,11 @@ pythonコマンドないので、python3コマンドを使ってね
 
 ## Repo Map
 
-- `src/main.rs`: Axum エントリポイント。埋め込み frontend asset / 紙面用フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、issue の draft 限定削除、一覧からの深い複製、添付の DB 保存、内部 temp dir を使う preview / thumbnail 生成、`/issues/{id}/print` と `/template-documents/{id}/print` の印刷 shell 配信を担当。legacy filesystem 吸い上げは `db init` / `db migrate` の明示 `--legacy-storage-dir` 側へ分離した。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
-- `web-src/main.js`: 文書ファミリー切替つき一覧画面、常会案内 editor、SVG テンプレ帳票 editor、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、template document の JSON editor、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集、`thumb_scale_percent` による項目サムネ倍率 slider を担当。
+- `src/main.rs`: Axum エントリポイント。埋め込み frontend asset / 紙面用フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、issue の draft 限定削除、一覧からの深い複製、添付の DB 保存、内部 temp dir を使う preview / thumbnail 生成、`/issues/{id}/print` と `/template-documents/{id}/print` の印刷 shell 配信を担当。`農作業傷害共済` は raw SVG を返す `/template-documents/{id}/print` 正本 HTML、headless Chromium による `/api/template-documents/{id}/print-pdf`、`/api/template-documents/{id}/preview-images` もここで持つ。legacy filesystem 吸い上げは `db init` / `db migrate` の明示 `--legacy-storage-dir` 側へ分離した。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
+- `web-src/main.js`: 文書ファミリー切替つき一覧画面、常会案内 editor、SVG テンプレ帳票 editor、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、template document の JSON editor、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集、`thumb_scale_percent` による項目サムネ倍率 slider を担当。`農作業傷害共済` editor は valid JSON 入力後に auto-save し、その保存済み draft を使って `preview-images` を再取得する。
 - `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計、item ごとの赤/青補足行群の組版、画像実寸比を踏まえた右上基点の項目サムネ倍率反映、本文白まわりの可読性確保、halo の top padding 超過防止をここで守る。
 - `web-src/template-doc-registry.js`: `農作業傷害共済` 用テンプレ定義、binding キー、default JSON payload、タイトル自動生成規則の正本。
-- `web-src/template-doc-pdf.js`: SVG テンプレ文字列に JSON を bind し、`pdfme` の `svg` schema で 1 ページ PDF を生成する中核。required binding が空ならここで `PDF生成に必要なキーが不足しています: ...` を投げる。
+- `web-src/template-doc-pdf.js`: 旧 `drawSvg` 経路の名残と `templateDocumentPdfFileName()` を持つ補助モジュール。`農作業傷害共済` の本線 preview / print / PDF 出力はここを通らない。
 - `web-src/app.css`: 編集UIとプレビューUIの見た目。項目サムネ倍率 slider のような非印刷UIの密度もここで保つ。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
 - `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `block_item_supplements` / `attachments` / `template_documents` に加え、`block_items.thumb_scale_percent`、添付原本の `attachment_original_contents`、サムネ cache の `attachment_thumbnail_caches`、legacy な `generated_files` を定義する。
 - `20260319-templ-shogai-kyosai.svg`: `農作業傷害共済` の v1 正本 SVG。`inkscape:label="bind:..."` を意味、`id="bind-..."` を安定参照に使う。
@@ -117,15 +117,15 @@ pythonコマンドないので、python3コマンドを使ってね
 
 - 紙面・段組み・余白・文字組みを触る前に、必ず `docs/exmple.png` と `context/repo-map.md` を読むこと。
 - 一覧画面の既存案内カード導線を触るときは、`web-src/main.js` の `renderIndex` と `src/main.rs` の `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/duplicate` をセットで確認すること。`published` の削除不可は UI と API の両方で守ること。
-- `農作業傷害共済` を触るときは、`web-src/template-doc-registry.js` の template 定義、`web-src/template-doc-pdf.js` の SVG bind / PDF生成、`src/main.rs` の `/api/template-documents` と `db/007_template_documents.sql` をセットで確認すること。`issues` へ列を足して混ぜないこと。
-- `農作業傷害共済` の preview 失敗を触るときは、まず `web-src/template-doc-registry.js` の required bindings、`src/main.rs` の default payload、`web-src/main.js` の template editor 初回 `schedulePreview()` を確認すること。空 payload のまま新規作成すると、現仕様では初回表示から preview が赤エラーになる。
+- `農作業傷害共済` を触るときは、`web-src/template-doc-registry.js` の template 定義、`src/main.rs` の `/api/template-documents` / `/api/template-documents/{id}/preview-images` / `/api/template-documents/{id}/print-pdf`、`/template-documents/{id}/print`、`db/007_template_documents.sql` をセットで確認すること。`issues` へ列を足して混ぜないこと。
+- `農作業傷害共済` の preview 失敗を触るときは、まず `web-src/template-doc-registry.js` の required bindings、`src/main.rs` の default payload、`web-src/main.js` の auto-save 後 preview 再取得、browser network の `PUT /api/template-documents/{id}` と `GET /api/template-documents/{id}/preview-images` を確認すること。空 payload のまま新規作成すると、現仕様では warning を出して止まる。
 - 編集画面の操作性を触るときは、`web-src/main.js` の DOM 構造と `web-src/app.css` の gap/padding/min-height を一緒に見ること。片方だけ触ると、また間延びする。
 - item 添付導線を触るときは、`web-src/main.js` のファイル選択・貼り付け・`Clipboardから追加` ボタンの 3 導線が同じ `POST /api/items/{id}/attachments` に収束している前提を崩さないこと。本文入力欄の通常貼り付けは横取りしないこと。
 - item の補足行群（赤/青）・対象者・期限・項目サムネ倍率の紙面表示を触るときは、`web-src/main.js` の補足行 UI / `meta_layout` UI / サムネ倍率 slider、`web-src/notice-pdf.js` の補足行/メタ行/サムネ描画、`src/main.rs` と `db/*.sql` の `block_item_supplements` / `block_items.meta_layout` / `block_items.thumb_scale_percent` をセットで確認すること。
 - right-top のズレや preview が `/api/preview-renders` 到達前に固まる症状を触るときは、まず `web-src/notice-pdf.js` の `measureImageDataUrl()` と `pushTextSchema()` の top padding clamp を確認すること。
 - 紙面/PDF 用フォントを触るときは、`bundled-assets/fonts/README.md`、`src/main.rs` の埋め込み配信、`web-src/notice-pdf.js` の `loadFonts()` をセットで確認すること。紙面側は Web フォント前提に戻さず、可変フォントをそのまま `pdfme` に渡さないこと。
-- プレビュー不一致を触るときは `web-src/main.js` と `src/main.rs` の `/api/preview-renders` をセットで確認すること。
-- 最終PDFの出力不具合を触るときは、まず `web-src/main.js` の `downloadNoticePdf` / `openPrintPageFromEditor` と `web-src/notice-pdf.js` を確認し、印刷 shell は `src/main.rs` の `/issues/{id}/print` を見ること。`/api/issues/{id}/print-pdf` は廃止メッセージを返す互換導線。
+- プレビュー不一致を触るときは、`常会案内` なら `web-src/main.js` と `src/main.rs` の `/api/preview-renders`、`農作業傷害共済` なら `web-src/main.js` と `src/main.rs` の `/api/template-documents/{id}/preview-images` / `/template-documents/{id}/print` をセットで確認すること。
+- 最終PDFの出力不具合を触るときは、`常会案内` は `web-src/main.js` の `downloadNoticePdf` / `openPrintPageFromEditor` と `web-src/notice-pdf.js`、印刷 shell は `src/main.rs` の `/issues/{id}/print` を見ること。`農作業傷害共済` は `src/main.rs` の `/template-documents/{id}/print` と `/api/template-documents/{id}/print-pdf` の Chromium 経路を優先確認すること。`/api/issues/{id}/print-pdf` は廃止メッセージを返す互換導線。
 - 編集画面の印刷導線を触るときは、`web-src/main.js` の `Ctrl+P` / `Cmd+P` ハンドラと `/issues/{id}/print` への遷移を確認すること。editor 自体を browser 既定印刷へ流さないのが前提。
 - DB 変更時は `db/*.sql`、`src/main.rs` のシリアライズ/保存処理、`web-src/main.js` の normalize/payload 生成を一緒に揃えること。
 - SVG テンプレ帳票の v1 は「JSON 構文だけ保存時に見る」「必須キー不足は PDF 生成時に見る」が前提。保存時に bind 必須キーまで確定させようとして UI を重くしないこと。
@@ -135,8 +135,9 @@ pythonコマンドないので、python3コマンドを使ってね
 - `npm ci`: 初回 clone 後や `node_modules` 不在の作業ツリーでフロント依存を復元する。未実行だと `./watch-run-server.sh` 内の `npm run build` が `vite: not found` で停止する。
 - `npm run build`: `web-src/` から `web-dist/` を再生成する。
 - `cargo fmt`: 変更後に実行が必要。
+- `./run-server.sh`: watch なしで `npm run build` 後に `cargo run -- web ...` を一発起動する。
 - `./db-init.sh` / `./db-migrate.sh` / `./db-status.sh` / `./db-reset.sh`: DB 操作用スクリプト。
-- 旧 filesystem 添付を DB へ吸い上げるときだけ `JOKAI_LEGACY_STORAGE_DIR=/path/to/data ./db-migrate.sh` のように明示する。`web` 実行や `./watch-run-server.sh` は `storage-dir` に依存しない。
+- 旧 filesystem 添付を DB へ吸い上げるときだけ `JOKAI_LEGACY_STORAGE_DIR=/path/to/data ./db-migrate.sh` のように明示する。`web` 実行、`./run-server.sh`、`./watch-run-server.sh` は `storage-dir` に依存しない。
 - `./watch-run-server.sh` / `./watch-all.sh`: 監視実行用スクリプト。
 - ただし Codex は上の Rust ルールを優先し、手動で `cargo run` / `cargo check` / `cargo build` / `cargo clippy` を叩かないこと。
 
@@ -154,6 +155,6 @@ pythonコマンドないので、python3コマンドを使ってね
 - 新しい context doc を追加したら、この `AGENTS.md` の `Context Routing` に登録すること。
 - 紙面構造を変えたら、見本 `docs/exmple.png` と差分理由を説明できる状態にすること。説明できない変更は雑音であり、原則として入れないこと。
 - 編集画面は情報密度を落としすぎないこと。header/action/card/attachment viewer の余白で作業負荷を増やす変更は避けること。
-- `pdftoppm` 依存を触るときはプレビュー系へ波及する前提で確認すること。headless Chrome 系コードは legacy なので、復活・削除・再配線は本線仕様を確認してから触ること。
+- `pdftoppm` 依存を触るときはプレビュー系へ波及する前提で確認すること。headless Chrome / Chromium は `農作業傷害共済` の print / preview / print-pdf 本線なので、ここを触るときは `/template-documents/{id}/print` と server-side PDF helper まで確認すること。
 - 生成物と原本の境界を曖昧にしないこと。添付資料原本を案内PDFに混ぜる変更は、この repo の設計原則に反する。
 - `農作業傷害共済` の JSON editor は v1 の割り切り実装。専用フォームを足したくなっても、先に `template_documents` 系の責務分界を壊していないか確認すること。
