@@ -25,9 +25,9 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
-     inkscape:zoom="2.0186728"
-     inkscape:cx="289.05129"
-     inkscape:cy="671.48077"
+     inkscape:zoom="1.4274172"
+     inkscape:cx="31.175188"
+     inkscape:cy="498.45272"
      inkscape:window-width="3840"
      inkscape:window-height="2089"
      inkscape:window-x="3832"
@@ -209,12 +209,12 @@
          style="stroke-width:0.33449"
          x="18.508244"
          y="122.80379"
-         id="tspan14">以下金額について、選択してください</tspan><tspan
+         id="tspan14">以下金額について、選択して、いずれかを丸で囲ってください。</tspan><tspan
          sodipodi:role="line"
          style="stroke-width:0.33449"
          x="18.508244"
          y="128.11034"
-         id="tspan51">  変更がない場合は今まで通りを囲んで下さい。変更される場合は、保障額を記入下さい。</tspan><tspan
+         id="tspan51">  変更がない場合は「今まで通り」を囲んで下さい。変更される場合は、保障額を記入下さい。</tspan><tspan
          sodipodi:role="line"
          style="stroke-width:0.33449"
          x="18.508244"
@@ -223,15 +223,15 @@
     <text
        xml:space="preserve"
        style="font-size:4.01389px;writing-mode:lr-tb;direction:ltr;fill:#000000;stroke-width:0.33449"
-       x="33.868729"
-       y="144.99084"
+       x="31.41643"
+       y="145.27826"
        id="text15"
        transform="scale(1.0964433,0.91203987)"><tspan
          sodipodi:role="line"
          id="tspan15"
          style="stroke-width:0.33449"
-         x="33.868729"
-         y="144.99084">これまで通り</tspan></text>
+         x="31.41643"
+         y="145.27826">今まで通り</tspan></text>
     <text
        xml:space="preserve"
        style="font-size:4.01389px;writing-mode:lr-tb;direction:ltr;fill:#000000;stroke-width:0.33449"
@@ -475,7 +475,7 @@
          id="bind-contract-holder-name-text"
          style="stroke-width:0.426745"
          x="113.41422"
-         y="33.803219">$contract_holder</tspan></text>
+         y="33.803219">$contract_holder さん</tspan></text>
     <text
        xml:space="preserve"
        style="font-size:5.12095px;writing-mode:lr-tb;direction:ltr;fill:#000000;stroke-width:0.426745"
@@ -588,5 +588,26 @@
          style="stroke-width:0.33449;fill:#ff0000"
          x="36.604897"
          y="255.52284">常会当日か、3/24(火)までに提出お願いします。</tspan></text>
+    <ellipse
+       style="fill:none;stroke:#010101;stroke-width:0.323001;stroke-dasharray:0.646002, 1.292;stroke-dashoffset:0"
+       id="path1"
+       cx="42.146942"
+       cy="131.21762"
+       rx="17.145622"
+       ry="3.7071617" />
+    <ellipse
+       style="fill:none;stroke:#010101;stroke-width:0.323001;stroke-dasharray:0.646002, 1.292;stroke-dashoffset:0"
+       id="ellipse3"
+       cx="42.146942"
+       cy="151.85484"
+       rx="17.145622"
+       ry="3.7071617" />
+    <ellipse
+       style="fill:none;stroke:#010101;stroke-width:0.323001;stroke-dasharray:0.646002, 1.292;stroke-dashoffset:0"
+       id="ellipse4"
+       cx="42.146942"
+       cy="171.96291"
+       rx="17.145622"
+       ry="3.7071617" />
   </g>
 </svg>
