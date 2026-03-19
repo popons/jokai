@@ -399,3 +399,8 @@
 - 2026-03-19 12:19:29 +0900 [検証] `http://localhost:12040/issues/e773ffe9-4c98-4efe-9eb2-04ae309bfdd0/edit` を再読込して preview を確認。本文/補足/メタ/フッターの white halo が視認できる程度に太くなり、赤ラベルや右下連絡先ブロックとの衝突は発生していない。
 - 2026-03-19 12:21:53 +0900 [codified-context] `codified-context-maintenance` を debug-followup で再実行し、inspect script / routing audit を確認。routing は十分だが、halo 倍化後の可読性前提が codified context に未反映と判断した。
 - 2026-03-19 12:21:53 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` を更新し、サムネ重なり可読性は現在は強めにした white halo に依存し、halo 調整時は実データ画面で再確認する運用を追記した。
+- 2026-03-19 12:24:37 +0900 [調査] `build-error.txt` と `test-error.txt` を確認し、いずれも失敗なし。PDF 2 ページ化の深掘り調査を開始。
+- 2026-03-19 12:24:37 +0900 [調査] `jokai-pdfme-layout`、`context/repo-map.md`、`docs/exmple.png`、`web-src/notice-pdf.js`、`web-src/main.js` を読み、見本と現行紙面生成経路を突合開始。
+- 2026-03-19 12:33:23 +0900 [調査] `buildTemplate()` は 1 ページ返却だが、`@pdfme/generator` 後の PDF は 2 ページ化することを再現。`footer` 付近の halo text を含むときだけ白紙 2 ページ目が発生し、`y >= 282mm` 付近の最小再現も確認。
+- 2026-03-19 12:35:06 +0900 [修正] `web-src/notice-pdf.js` の footer note / contact だけ halo を外した。本文側 halo は維持しつつ、同ファイルから直接生成した PDF が 1 ページ化することを `pdfinfo` で確認。
+- 2026-03-19 12:35:06 +0900 [codified-context] `codified-context-maintenance` を debug-followup で実施。`AGENTS.md` と `context/repo-map.md` に footer halo が `pdfme` の白紙ページ bug を踏む知見を反映する方針を確定。

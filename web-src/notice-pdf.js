@@ -732,9 +732,8 @@ function addContinuationMarker(page, typography) {
 function addFinalPageFooter(page, issue, footerLayout, typography) {
   const noteText = normalizeText(issue.footer_note);
   if (noteText) {
-    pushTextSchema(
-      page,
-      {
+    page.push(
+      createTextSchema({
         name: `footer-note-${page.length}`,
         x: FOOTER_LEFT_X,
         y: footerLayout.footerTop + Math.max(0, footerLayout.contentHeight - footerLayout.noteHeight),
@@ -745,8 +744,7 @@ function addFinalPageFooter(page, issue, footerLayout, typography) {
         fontSize: typography.footer.note,
         lineHeight: typography.footer.lineHeight.note,
         fontColor: COLOR_RED,
-      },
-      { halo: true },
+      }),
     );
   }
 
@@ -759,9 +757,8 @@ function addFinalPageFooter(page, issue, footerLayout, typography) {
     footerLayout.footerTop + Math.max(0, footerLayout.contentHeight - footerLayout.contactHeight);
 
   FOOTER_CONTACT_LINES.forEach((line, index) => {
-    pushTextSchema(
-      page,
-      {
+    page.push(
+      createTextSchema({
         name: `footer-contact-${page.length}`,
         x: FOOTER_RIGHT_X,
         y: contactTop + lineHeightMm * index,
@@ -772,8 +769,7 @@ function addFinalPageFooter(page, issue, footerLayout, typography) {
         fontSize: typography.footer.contact,
         lineHeight: typography.footer.lineHeight.contact,
         alignment: "right",
-      },
-      { halo: true },
+      }),
     );
   });
 }

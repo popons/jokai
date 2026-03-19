@@ -18,7 +18,7 @@
 |---|---|
 | `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信を担当。`農作業傷害共済` は `payload.rows[]` を single object 互換で正規化し、行数ベースの自動タイトルを返し、server-rendered `/template-documents/{id}/print` 正本 HTML、headless Chromium による `print-pdf` 生成、`preview-images` API もここで持つ。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
 | `web-src/main.js` | 文書ファミリー切替付き一覧画面、常会案内 editor、SVG テンプレ帳票 editor の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、rows[] 台帳 UI、補助 JSON editor、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替え、`thumb_scale_percent` による項目単位サムネ倍率 slider を担当。常会案内 editor の小項目 toolbar は、heading/body/対象者/期限/補足行/添付のいずれかがあるときだけ `①` などの番号を表示する。`農作業傷害共済` editor では 1 行 1 ページ前提で `payload.rows[]` を編集し、行編集または valid JSON 入力時に auto-save 後、server-side `preview-images` を再取得する |
-| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。小項目見出しの `①` などの番号は、紙面に出る内容が 1 つでもある item にだけ表示し、完全に空の item では番号も出さない。紙面内の見出し系・本文・補足・対象者/期限メタは赤い右ラベルの手前まで右へ伸ばし、サムネ重なりを許容する。最終ページ左下 footer メモも右下連絡先ブロックの直前まで横に伸ばす。右脇サムネは `thumb_scale_percent` で項目ごとに 80〜200% を右上基点で拡縮し、`measureImageDataUrl()` で実画像アスペクト比を測って「見えている画像」自体の右上を固定する。画像自体は全テキストの背面へ置き、`pushTextSchema()` の halo は blank page の top padding を割らないよう clamp しつつ、現在は倍化した強めの white halo で重なった本文の可読性を守る。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
+| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。小項目見出しの `①` などの番号は、紙面に出る内容が 1 つでもある item にだけ表示し、完全に空の item では番号も出さない。紙面内の見出し系・本文・補足・対象者/期限メタは赤い右ラベルの手前まで右へ伸ばし、サムネ重なりを許容する。最終ページ左下 footer メモも右下連絡先ブロックの直前まで横に伸ばす。右脇サムネは `thumb_scale_percent` で項目ごとに 80〜200% を右上基点で拡縮し、`measureImageDataUrl()` で実画像アスペクト比を測って「見えている画像」自体の right-top を固定する。画像自体は全テキストの背面へ置き、`pushTextSchema()` の halo は blank page の top padding を割らないよう clamp しつつ、現在は倍化した強めの white halo で重なった本文の可読性を守る。ただし footer 帯は例外で、page bottom 付近の halo text が `pdfme` の白紙ページ追加 bug を踏むため halo を載せない。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
 | `web-src/template-doc-registry.js` | `農作業傷害共済` の template 定義、binding キー、`payload.rows[]` の default/normalize、行単位必須チェック、タイトル自動生成規則の正本 |
 | `web-src/template-doc-pdf.js` | `templateDocumentPdfFileName()` と rows[] 対応の browser-side 補助 builder を持つ補助モジュール。`農作業傷害共済` の本線 preview / print / PDF 出力は 2026-03-19 時点で Chromium 経路が正本 |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
@@ -173,8 +173,8 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 - item 添付導線を触ったら、ファイル選択、貼り付け欄での `Ctrl+V` / `Cmd+V`、`Clipboardから追加` ボタン、本文 textarea での通常テキスト貼り付け非干渉を確認する。
 - 小項目番号表示を触ったら、空の item では editor toolbar も紙面見出しも `①` を出さず、heading/body/対象者/期限/補足行/添付のどれかが入った時点で番号が出ることを確認する。
 - 本文右余白を触ったら、LIME 指摘の死帯が縮み、紙面内の見出し系・本文・補足・メタが赤い右ラベルの直前まで伸びつつ、サムネ重なりでも白ハローで読めることを確認する。
-- footer 横幅を触ったら、左下赤メモが右下連絡先ブロックの直前まで伸び、連絡先ブロックとは衝突せず、同一ページ内に収まることを確認する。
-- halo を触ったら、`/issues/e773ffe9-4c98-4efe-9eb2-04ae309bfdd0/edit` のような実データで、本文・補足・メタ・footer の重なり可読性が落ちていないことを確認する。
+- footer 横幅を触ったら、左下赤メモが右下連絡先ブロックの直前まで伸び、連絡先ブロックとは衝突せず、同一ページ内に収まることを確認する。footer 帯に halo を足した場合は blank page が混ざらないことまで確認する。
+- halo を触ったら、`/issues/e773ffe9-4c98-4efe-9eb2-04ae309bfdd0/edit` のような実データで、本文・補足・メタの重なり可読性が落ちていないことを確認する。footer は例外で、`y >= 282mm` 付近の halo text が `pdfme` の白紙 2 ページ目 bug を踏む。
 - 紙面を変える前に `docs/exmple.png` を確認し、差分の理由を説明できない変更は入れない。
 - 最終PDFの不具合は `web-src/main.js` の `downloadNoticePdf()` / `openPrintPageFromEditor()`、`web-src/notice-pdf.js`、`src/main.rs` の `/issues/{id}/print` shell を優先確認する。`/api/issues/{id}/print-pdf` は本線ではない。
 - 非印刷 editor UI のスクロールが多いときは、まず `masthead` / action-row / card 内 gap を詰める。A4 プレビュー本体を縮めてごまかさない。
