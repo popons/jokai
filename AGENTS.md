@@ -97,14 +97,15 @@ pythonコマンドないので、python3コマンドを使ってね
   - 「案内PDF」は本体紙面のみ出力する。
   - 添付資料は紙面ではサムネのみ表示し、原本閲覧/ダウンロードは別導線に分離する。
   - `農作業傷害共済` は `常会案内` と同じ `issues` 系へ混ぜず、`template_documents` 系の別保存モデルで扱う。
+  - `農作業傷害共済` は `payload.rows[]` の 1 行を 1 ページとして印刷する。未入力行が 1 行でも残ると、一括 preview / PDF 全体を止める。
 
 ## Repo Map
 
 - `src/main.rs`: Axum エントリポイント。埋め込み frontend asset / 紙面用フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、issue の draft 限定削除、一覧からの深い複製、添付の DB 保存、内部 temp dir を使う preview / thumbnail 生成、`/issues/{id}/print` と `/template-documents/{id}/print` の印刷 shell 配信を担当。`農作業傷害共済` は raw SVG を返す `/template-documents/{id}/print` 正本 HTML、headless Chromium による `/api/template-documents/{id}/print-pdf`、`/api/template-documents/{id}/preview-images` もここで持つ。legacy filesystem 吸い上げは `db init` / `db migrate` の明示 `--legacy-storage-dir` 側へ分離した。`/api/issues/{id}/print-pdf` は互換メッセージのみで、server-side PDF生成は現状本線ではない。
-- `web-src/main.js`: 文書ファミリー切替つき一覧画面、常会案内 editor、SVG テンプレ帳票 editor、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、template document の JSON editor、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集、`thumb_scale_percent` による項目サムネ倍率 slider を担当。`農作業傷害共済` editor は valid JSON 入力後に auto-save し、その保存済み draft を使って `preview-images` を再取得する。
+- `web-src/main.js`: 文書ファミリー切替つき一覧画面、常会案内 editor、SVG テンプレ帳票 editor、状態管理、保存、常時プレビュー再生成、一覧カードの `編集へ` / `複製` / `削除` 導線、template document の rows[] 台帳 UI と補助 JSON editor、添付ビューア、item 添付欄での Clipboard 画像登録導線、item ごとの補足行群（赤/青）編集、`thumb_scale_percent` による項目サムネ倍率 slider を担当。`農作業傷害共済` editor は `payload.rows[]` を 1 行 1 ページ前提で編集し、行編集または valid JSON 変更後に auto-save して、その保存済み draft を使って `preview-images` を再取得する。
 - `web-src/notice-pdf.js`: `pdfme` を使う A4 固定レイアウト生成の中核。本文左カラムと資料サムネ右カラムの設計、item ごとの赤/青補足行群の組版、画像実寸比を踏まえた右上基点の項目サムネ倍率反映、本文白まわりの可読性確保、halo の top padding 超過防止をここで守る。
-- `web-src/template-doc-registry.js`: `農作業傷害共済` 用テンプレ定義、binding キー、default JSON payload、タイトル自動生成規則の正本。
-- `web-src/template-doc-pdf.js`: 旧 `drawSvg` 経路の名残と `templateDocumentPdfFileName()` を持つ補助モジュール。`農作業傷害共済` の本線 preview / print / PDF 出力はここを通らない。
+- `web-src/template-doc-registry.js`: `農作業傷害共済` 用テンプレ定義、binding キー、`payload.rows[]` の default/normalize、行単位必須チェック、タイトル自動生成規則の正本。
+- `web-src/template-doc-pdf.js`: `templateDocumentPdfFileName()` と rows[] 対応の browser-side 補助 builder を持つ補助モジュール。`農作業傷害共済` の本線 preview / print / PDF 出力は Chromium 経路が正本で、ここは補助扱い。
 - `web-src/app.css`: 編集UIとプレビューUIの見た目。項目サムネ倍率 slider のような非印刷UIの密度もここで保つ。紙面そのもののレイアウト原則は `notice-pdf.js` 側が主。
 - `db/*.sql`: PostgreSQL マイグレーション。`issues` / `blocks` / `block_items` / `block_item_supplements` / `attachments` / `template_documents` に加え、`block_items.thumb_scale_percent`、添付原本の `attachment_original_contents`、サムネ cache の `attachment_thumbnail_caches`、legacy な `generated_files` を定義する。
 - `20260319-templ-shogai-kyosai.svg`: `農作業傷害共済` の v1 正本 SVG。`inkscape:label="bind:..."` を意味、`id="bind-..."` を安定参照に使う。
@@ -118,7 +119,7 @@ pythonコマンドないので、python3コマンドを使ってね
 - 紙面・段組み・余白・文字組みを触る前に、必ず `docs/exmple.png` と `context/repo-map.md` を読むこと。
 - 一覧画面の既存案内カード導線を触るときは、`web-src/main.js` の `renderIndex` と `src/main.rs` の `/api/issues`、`/api/issues/{id}`、`/api/issues/{id}/duplicate` をセットで確認すること。`published` の削除不可は UI と API の両方で守ること。
 - `農作業傷害共済` を触るときは、`web-src/template-doc-registry.js` の template 定義、`src/main.rs` の `/api/template-documents` / `/api/template-documents/{id}/preview-images` / `/api/template-documents/{id}/print-pdf`、`/template-documents/{id}/print`、`db/007_template_documents.sql` をセットで確認すること。`issues` へ列を足して混ぜないこと。
-- `農作業傷害共済` の preview 失敗を触るときは、まず `web-src/template-doc-registry.js` の required bindings、`src/main.rs` の default payload、`web-src/main.js` の auto-save 後 preview 再取得、browser network の `PUT /api/template-documents/{id}` と `GET /api/template-documents/{id}/preview-images` を確認すること。空 payload のまま新規作成すると、現仕様では warning を出して止まる。
+- `農作業傷害共済` の preview 失敗を触るときは、まず `web-src/template-doc-registry.js` の required bindings と `rows[]` normalize、`src/main.rs` の default payload / 行検証、`web-src/main.js` の auto-save 後 preview 再取得、browser network の `PUT /api/template-documents/{id}` と `GET /api/template-documents/{id}/preview-images` を確認すること。未入力行が 1 行でも残ると、現仕様では一括 preview / PDF 全体を止める。
 - 編集画面の操作性を触るときは、`web-src/main.js` の DOM 構造と `web-src/app.css` の gap/padding/min-height を一緒に見ること。片方だけ触ると、また間延びする。
 - item 添付導線を触るときは、`web-src/main.js` のファイル選択・貼り付け・`Clipboardから追加` ボタンの 3 導線が同じ `POST /api/items/{id}/attachments` に収束している前提を崩さないこと。本文入力欄の通常貼り付けは横取りしないこと。
 - item の補足行群（赤/青）・対象者・期限・項目サムネ倍率の紙面表示を触るときは、`web-src/main.js` の補足行 UI / `meta_layout` UI / サムネ倍率 slider、`web-src/notice-pdf.js` の補足行/メタ行/サムネ描画、`src/main.rs` と `db/*.sql` の `block_item_supplements` / `block_items.meta_layout` / `block_items.thumb_scale_percent` をセットで確認すること。
@@ -128,7 +129,7 @@ pythonコマンドないので、python3コマンドを使ってね
 - 最終PDFの出力不具合を触るときは、`常会案内` は `web-src/main.js` の `downloadNoticePdf` / `openPrintPageFromEditor` と `web-src/notice-pdf.js`、印刷 shell は `src/main.rs` の `/issues/{id}/print` を見ること。`農作業傷害共済` は `src/main.rs` の `/template-documents/{id}/print` と `/api/template-documents/{id}/print-pdf` の Chromium 経路を優先確認すること。`/api/issues/{id}/print-pdf` は廃止メッセージを返す互換導線。
 - 編集画面の印刷導線を触るときは、`web-src/main.js` の `Ctrl+P` / `Cmd+P` ハンドラと `/issues/{id}/print` への遷移を確認すること。editor 自体を browser 既定印刷へ流さないのが前提。
 - DB 変更時は `db/*.sql`、`src/main.rs` のシリアライズ/保存処理、`web-src/main.js` の normalize/payload 生成を一緒に揃えること。
-- SVG テンプレ帳票の v1 は「JSON 構文だけ保存時に見る」「必須キー不足は PDF 生成時に見る」が前提。保存時に bind 必須キーまで確定させようとして UI を重くしないこと。
+- SVG テンプレ帳票の v1 は `payload.rows[]` の行編集が主 UI で、補助として JSON editor を残す前提。保存時は JSON 構文だけ見て、必須キー不足は preview / print / print-pdf で止める。保存時に bind 必須キーまで確定させようとして UI を重くしないこと。
 
 ## 既知コマンド
 
@@ -158,3 +159,4 @@ pythonコマンドないので、python3コマンドを使ってね
 - `pdftoppm` 依存を触るときはプレビュー系へ波及する前提で確認すること。headless Chrome / Chromium は `農作業傷害共済` の print / preview / print-pdf 本線なので、ここを触るときは `/template-documents/{id}/print` と server-side PDF helper まで確認すること。
 - 生成物と原本の境界を曖昧にしないこと。添付資料原本を案内PDFに混ぜる変更は、この repo の設計原則に反する。
 - `農作業傷害共済` の JSON editor は v1 の割り切り実装。専用フォームを足したくなっても、先に `template_documents` 系の責務分界を壊していないか確認すること。
+- `農作業傷害共済` は 1 行 1 ページで印刷する rows[] 帳票に変わった。専用フォームや CSV 取込を足したくなっても、先に `payload.rows[]`・auto-save・Chromium 印刷の責務分界を壊していないか確認すること。

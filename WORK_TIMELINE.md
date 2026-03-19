@@ -354,3 +354,20 @@
 - 2026-03-19 09:34:08 +0900 [検証] 変更後 1 秒待機して `build-error.txt`・`test-error.txt`・`clippy-error.txt` を確認し、失敗なしを確認。`build-error-win.txt` は未生成のまま。
 - 2026-03-19 10:27:35 +0900 [コミット準備] `git status` と `20260319-templ-shogai-kyosai.svg` の差分を確認し、作業中差分は SVG 1ファイルのみ、見た目調整と差し込み文字整理が同一目的のため 1コミットで扱う判断をした。
 - 2026-03-19 10:28:03 +0900 [コミット方針] 件名は `fix: 農作業傷害共済SVGの差し込み表示と金額欄を見直す` とし、本文で「契約者名・年齢プレースホルダの引用符除去」「重複していた金額単位ラベル削除」「注意書き強調と枠サイズ調整」を説明する方針に決めた。
+- 2026-03-19 10:33:17 +0900 [調査] `build-error.txt` と `test-error.txt` を確認し、Rust 側の既存ビルド・テスト失敗が出ていないことを確認。
+- 2026-03-19 10:33:17 +0900 [調査] `context/repo-map.md` と template document 関連コードを読み、`template_documents.payload jsonb` は単一帳票の JSON を保存する前提で、現状 UI は JSON textarea 1件編集・1件PDF出力に固定されていることを確認。
+- 2026-03-19 10:36:00 +0900 [調査] `web-src/main.js`・`src/main.rs`・`db/007_template_documents.sql` を追加確認し、現状は `parseTemplatePayloadText()` が top-level array を禁止、server 側も flat object の必須 7 キー前提で SVG 1枚を描画し、`/template-documents/{id}/print` を Chrome 印刷して 1件PDFを生成していることを確認。
+- 2026-03-19 10:36:00 +0900 [調査] 指定 URL の現行 editor をブラウザで確認し、現在の帳票は JSON textarea と右側 PDF プレビューの2カラム構成で、ユーザー提示の画像は「7項目の行追加/削除 UI」と「実データ表から複数人分を入力する」方向であることを確認。
+- 2026-03-19 10:42:03 +0900 [要件] ユーザー回答として「保存単位は 1 template_document 内の rows[]」「初回データ投入は画像に見えている全行」「一覧タイトルとPDF名は日付+件数自動命名」を採用。
+- 2026-03-19 10:46:10 +0900 [要件] 追加回答として「必須未入力が 1 行でもあれば一括PDF全体を停止」「日付は PDF 出力日」「未使用の契約番号/コード等は今回保存しない」を採用し、要件定義を実装着手可能な状態まで確定。
+- 2026-03-19 11:00:06 +0900 [実装] `web-src/template-doc-registry.js` を rows[] 正本へ変更し、単一 object 互換・行単位必須チェック・日付+件数の自動タイトル・複数ページ向けファイル名生成へ寄せ始めた。
+- 2026-03-19 11:00:06 +0900 [実装] `web-src/main.js` と `web-src/app.css` で template editor を JSON 直編集中心から行追加/削除できる台帳UIへ差し替え中。`src/main.rs` では payload 正規化と print HTML の複数ページ化に着手。
+- 2026-03-19 11:01:25 +0900 [検証] `cargo fmt` と `npm run build` を実行し、watcher の `build-error.txt`・`test-error.txt`・`clippy-error.txt` で失敗が出ていないことを確認。
+- 2026-03-19 11:01:25 +0900 [検証] 旧 `target/debug/jokai web --bind 0.0.0.0:12040` プロセスを停止し、最新差分での `./run-server.sh` 検証に切り替える準備をした。
+- 2026-03-19 11:10:15 +0900 [実装] `src/main.rs` の template document 経路を rows[] 正規化・自動タイトル・複数ページ print HTML / print-pdf へ変更し、空ページを生んでいた改ページ指定を撤去。
+- 2026-03-19 11:10:15 +0900 [データ投入] `3318dbb7-9630-461a-acf5-d34d3e63bdc2` に 9 件の契約者行を投入し、一覧・編集画面・印刷画面で `2026-03-19 / 9件` と 9 ページ出力になることを確認。
+- 2026-03-19 11:10:15 +0900 [検証] `./run-server.sh` で再起動した実サーバを Chrome で確認し、行追加・行削除・自動保存・編集 preview 9枚・印刷ページ 9枚・watcher の build/test/clippy 成功を確認。
+- 2026-03-19 11:23:00 +0900 [codified-context] `codified-context-maintenance` を implementation-followup として起動し、変更セット inspection と routing audit を実行。`AGENTS.md` / `context/repo-map.md` が template document の single-object/JSON直編集前提で stale と判断。
+- 2026-03-19 11:26:00 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` を rows[] 台帳 UI・1行1ページ・日付+件数の自動命名・Chromium 複数ページ印刷の現実へ更新。新規 context doc や skill 追加は不要と判断。
+- 2026-03-19 11:26:31 +0900 [codified-context] 更新後に inspection / routing audit / stale 文言 grep を再実行し、template document の current truth が `AGENTS.md` と `context/repo-map.md` の両方で rows[] 前提へ追従したことを確認。
+- 2026-03-19 11:38:45 +0900 [コミット準備] `git diff --stat` と個別差分を確認し、`20260319-templ-shogai-kyosai.svg` の紙面修正と rows[] 実装+codified-context 更新は責務が分かれるため 2 コミットに分離する判断をした。

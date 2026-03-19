@@ -5,6 +5,7 @@ import { svg } from "@pdfme/schemas";
 import {
   missingTemplatePayloadKeys,
   normalizeTemplatePayload,
+  templatePayloadRows,
   templateDefinition,
   templateDocumentAutoTitle,
 } from "./template-doc-registry.js";
@@ -119,8 +120,12 @@ function collectBindingAnchors(svgDocument) {
 
 function renderTemplateSvg(documentFamily, templateKey, payloadInput = {}) {
   const definition = templateDefinition(documentFamily, templateKey);
-  const payload = normalizeTemplatePayload(documentFamily, templateKey, payloadInput);
-  const missing = missingTemplatePayloadKeys(documentFamily, templateKey, payload);
+  const rows = templatePayloadRows(documentFamily, templateKey, payloadInput);
+  if (!rows.length) {
+    throw new Error("PDF生成に必要な行がありません。");
+  }
+  const payload = rows[0];
+  const missing = missingTemplatePayloadKeys(documentFamily, templateKey, { rows: [payload] });
   if (missing.length) {
     throw new Error(
       `PDF生成に必要なキーが不足しています: ${missing.map((binding) => binding.key).join(", ")}`,
@@ -164,48 +169,51 @@ function sanitizePdfFilePart(value, fallback) {
 
 export function templateDocumentPdfFileName(document, payloadInput = document?.payload || {}) {
   const title = sanitizePdfFilePart(
-    String(document?.title || templateDocumentAutoTitle(document?.document_family, document?.template_key, payloadInput)),
+    templateDocumentAutoTitle(document?.document_family, document?.template_key, payloadInput),
     "template-document",
   );
   return `${title}.pdf`;
 }
 
 export async function buildTemplateDocumentPdfDocument(document, payloadInput = document?.payload || {}) {
-  const { definition, payload, svgString } = renderTemplateSvg(
-    document.document_family,
-    document.template_key,
-    payloadInput,
+  const rows = templatePayloadRows(document.document_family, document.template_key, payloadInput);
+  if (!rows.length) {
+    throw new Error("PDF生成に必要な行がありません。");
+  }
+  const renderedRows = rows.map((row) =>
+    renderTemplateSvg(document.document_family, document.template_key, { rows: [row] }),
   );
+  const { definition } = renderedRows[0];
   const font = await loadFonts();
   const template = {
     basePdf: { width: A4_WIDTH_MM, height: A4_HEIGHT_MM, padding: [0, 0, 0, 0] },
-    schemas: [
-      [
-        {
-          name: "template-svg",
-          type: "svg",
-          position: { x: 0, y: 0 },
-          width: A4_WIDTH_MM,
-          height: A4_HEIGHT_MM,
-          content: svgString,
-          readOnly: true,
-        },
-      ],
-    ],
+    schemas: renderedRows.map(({ svgString }) => [
+      {
+        name: "template-svg",
+        type: "svg",
+        position: { x: 0, y: 0 },
+        width: A4_WIDTH_MM,
+        height: A4_HEIGHT_MM,
+        content: svgString,
+        readOnly: true,
+      },
+    ]),
   };
 
   const bytes = await generate({
     template,
-    inputs: [{}],
+    inputs: renderedRows.map(() => ({})),
     plugins: {
       svg: svgWithFonts,
     },
     options: {
       font,
       fonts: font,
-      title:
-        String(document.title || "").trim() ||
-        templateDocumentAutoTitle(document.document_family, document.template_key, payload),
+      title: templateDocumentAutoTitle(
+        document.document_family,
+        document.template_key,
+        payloadInput,
+      ),
       subject: definition.label,
       lang: "ja",
     },
@@ -214,7 +222,7 @@ export async function buildTemplateDocumentPdfDocument(document, payloadInput = 
   return {
     bytes,
     template,
-    svgString,
-    payload,
+    svgStrings: renderedRows.map(({ svgString }) => svgString),
+    payload: normalizeTemplatePayload(document.document_family, document.template_key, payloadInput),
   };
 }

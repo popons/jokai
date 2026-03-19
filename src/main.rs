@@ -274,6 +274,7 @@ struct TemplateDocumentListItem {
   title: String,
   template_asset_path: String,
   template_version: String,
+  row_count: usize,
   updated_at: Option<String>,
 }
 
@@ -291,6 +292,7 @@ struct TemplateDocumentDetail {
   title: String,
   template_asset_path: String,
   template_version: String,
+  row_count: usize,
   payload: serde_json::Value,
   created_at: Option<String>,
   updated_at: Option<String>,
@@ -634,13 +636,7 @@ fn resolve_template_document_descriptor(
 fn default_template_document_payload(descriptor: TemplateDocumentDescriptor) -> serde_json::Value {
   match (descriptor.document_family, descriptor.template_key) {
     (TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI, TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL) => json!({
-      "contract_holder": "",
-      "age_previous": "",
-      "age_current": "",
-      "ending_disability": "",
-      "ending_medical": "",
-      "ending_date": "",
-      "ending_premium": "",
+      "rows": [blank_template_document_row_payload(descriptor)],
     }),
     _ => json!({}),
   }
@@ -710,6 +706,127 @@ fn template_payload_display_value(payload: &serde_json::Value, key: &str) -> Str
     .replace("\r\n", "\n")
 }
 
+fn blank_template_document_row_payload(
+  descriptor: TemplateDocumentDescriptor,
+) -> serde_json::Value {
+  serde_json::Value::Object(
+    template_document_bindings(descriptor)
+      .iter()
+      .map(|binding| {
+        (
+          binding.key.to_string(),
+          serde_json::Value::String(String::new()),
+        )
+      })
+      .collect(),
+  )
+}
+
+fn normalize_template_document_row_payload(
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> serde_json::Value {
+  serde_json::Value::Object(
+    template_document_bindings(descriptor)
+      .iter()
+      .map(|binding| {
+        (
+          binding.key.to_string(),
+          serde_json::Value::String(template_payload_display_value(payload, binding.key)),
+        )
+      })
+      .collect(),
+  )
+}
+
+fn template_document_row_has_any_value(
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> bool {
+  template_document_bindings(descriptor)
+    .iter()
+    .any(|binding| {
+      !template_payload_display_value(payload, binding.key)
+        .trim()
+        .is_empty()
+    })
+}
+
+fn template_document_rows_from_payload(
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+  if let Some(rows) = payload.get("rows").and_then(|value| value.as_array()) {
+    return rows
+      .iter()
+      .map(|row| normalize_template_document_row_payload(descriptor, row))
+      .collect();
+  }
+
+  if payload.is_object() {
+    return vec![normalize_template_document_row_payload(descriptor, payload)];
+  }
+
+  Vec::new()
+}
+
+fn normalize_template_document_payload(
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> serde_json::Value {
+  json!({
+    "rows": template_document_rows_from_payload(descriptor, payload),
+  })
+}
+
+fn template_document_row_count(
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> usize {
+  template_document_rows_from_payload(descriptor, payload)
+    .into_iter()
+    .filter(|row| template_document_row_has_any_value(descriptor, row))
+    .count()
+}
+
+fn validate_template_document_payload(
+  descriptor: TemplateDocumentDescriptor,
+  payload: &serde_json::Value,
+) -> std::result::Result<Vec<serde_json::Value>, (StatusCode, String)> {
+  let rows = template_document_rows_from_payload(descriptor, payload);
+  if rows.is_empty() {
+    return Err(api_conflict(
+      "帳票の生成に必要な契約者行がありません。1件以上追加してください。",
+    ));
+  }
+
+  let mut missing = Vec::new();
+  for (row_index, row) in rows.iter().enumerate() {
+    for binding in template_document_bindings(descriptor) {
+      if template_payload_display_value(row, binding.key)
+        .trim()
+        .is_empty()
+      {
+        missing.push(format!(
+          "{}行目: {} ({})",
+          row_index + 1,
+          binding.description,
+          binding.key
+        ));
+      }
+    }
+  }
+
+  if !missing.is_empty() {
+    return Err(api_conflict(format!(
+      "帳票の生成に必要な項目が不足しています: {}",
+      missing.join(", ")
+    )));
+  }
+
+  Ok(rows)
+}
+
 fn missing_template_document_bindings(
   descriptor: TemplateDocumentDescriptor,
   payload: &serde_json::Value,
@@ -766,39 +883,24 @@ fn render_template_document_svg_markup(
   Ok(svg)
 }
 
-fn template_payload_string_value(payload: &serde_json::Value, key: &str) -> String {
-  payload
-    .get(key)
-    .and_then(|value| value.as_str())
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-    .unwrap_or_default()
-    .to_string()
-}
-
 fn default_template_document_title(
   descriptor: TemplateDocumentDescriptor,
   payload: &serde_json::Value,
 ) -> String {
-  let contract_holder = template_payload_string_value(payload, "contract_holder");
-  if contract_holder.is_empty() {
-    format!("{} / 契約者未設定", descriptor.title_prefix)
-  } else {
-    format!("{} / {}", descriptor.title_prefix, contract_holder)
-  }
+  format!(
+    "{} / {} / {}件",
+    descriptor.title_prefix,
+    Local::now().format("%Y-%m-%d"),
+    template_document_row_count(descriptor, payload)
+  )
 }
 
 fn normalize_template_document_title(
-  raw_title: &str,
+  _raw_title: &str,
   descriptor: TemplateDocumentDescriptor,
   payload: &serde_json::Value,
 ) -> String {
-  let trimmed = raw_title.trim();
-  if trimmed.is_empty() {
-    default_template_document_title(descriptor, payload)
-  } else {
-    trimmed.to_string()
-  }
+  default_template_document_title(descriptor, payload)
 }
 
 fn normalize_month_value(raw: &str) -> String {
@@ -1029,17 +1131,31 @@ fn app_shell(
 fn template_document_print_html(
   document: &TemplateDocumentDetail,
   descriptor: TemplateDocumentDescriptor,
-  svg_markup: &str,
+  svg_markups: &[String],
 ) -> Html<String> {
-  let title = html_escape_text(&document.title);
+  let resolved_title = default_template_document_title(descriptor, &document.payload);
+  let title = html_escape_text(&resolved_title);
   let document_id = html_escape_text(&document.id);
   let edit_url = format!("/template-documents/{}/edit", document_id);
   let pdf_api_url = format!("/api/template-documents/{}/print-pdf", document_id);
   let download_name_json = serde_json::to_string(&format!(
     "{}.pdf",
-    sanitize_pdf_download_name(document.title.trim(), "template-document")
+    sanitize_pdf_download_name(&resolved_title, "template-document")
   ))
   .unwrap_or_else(|_| "\"template-document.pdf\"".to_string());
+  let page_count = svg_markups.len();
+  let pages_markup = svg_markups
+    .iter()
+    .enumerate()
+    .map(|(index, svg_markup)| {
+      format!(
+        "<article class=\"template-print-paper\"><div class=\"template-print-page-label\">Page {}</div>{}</article>",
+        index + 1,
+        svg_markup
+      )
+    })
+    .collect::<Vec<_>>()
+    .join("");
 
   Html(format!(
     r#"<!doctype html>
@@ -1113,19 +1229,35 @@ fn template_document_print_html(
       .template-print-stage {{
         width: min(100%, 1180px);
         margin: 0 auto;
-        display: flex;
-        justify-content: center;
+        display: grid;
+        gap: 18px;
+        justify-items: center;
       }}
       .template-print-paper {{
         width: 210mm;
         min-height: 297mm;
+        position: relative;
         background: #fff;
         box-shadow: 0 18px 50px rgba(34, 47, 78, 0.14);
+        break-inside: avoid;
+        page-break-inside: avoid;
       }}
       .template-print-paper svg {{
         display: block;
         width: 210mm;
         height: 297mm;
+      }}
+      .template-print-page-label {{
+        position: absolute;
+        top: 10px;
+        right: 14px;
+        padding: 4px 9px;
+        border-radius: 999px;
+        background: rgba(28, 39, 64, 0.08);
+        color: #51607b;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }}
       @media print {{
         html,
@@ -1143,8 +1275,14 @@ fn template_document_print_html(
           width: 210mm;
           margin: 0;
         }}
+        .template-print-stage {{
+          display: block;
+        }}
         .template-print-paper {{
           box-shadow: none;
+        }}
+        .template-print-page-label {{
+          display: none;
         }}
       }}
     </style>
@@ -1154,7 +1292,7 @@ fn template_document_print_html(
       <header class="template-print-toolbar">
         <div>
           <h1>{title}</h1>
-          <p>{family_label} / テンプレ版 {template_version}</p>
+          <p>{family_label} / テンプレ版 {template_version} / {page_count}ページ</p>
         </div>
         <div class="template-print-actions">
           <a href="{edit_url}">編集へ戻る</a>
@@ -1162,9 +1300,7 @@ fn template_document_print_html(
         </div>
       </header>
       <section class="template-print-stage">
-        <article class="template-print-paper">
-          {svg_markup}
-        </article>
+        {pages_markup}
       </section>
     </main>
     <script>
@@ -1198,6 +1334,8 @@ fn template_document_print_html(
 </html>"#,
     family_label = html_escape_text("農作業傷害共済"),
     template_version = html_escape_text(descriptor.template_version),
+    page_count = page_count,
+    pages_markup = pages_markup,
   ))
 }
 
@@ -1930,17 +2068,7 @@ async fn generate_template_document_pdf(
     &document.document.document_family,
     &document.document.template_key,
   )?;
-  let missing = missing_template_document_bindings(descriptor, &document.document.payload);
-  if !missing.is_empty() {
-    let summary = missing
-      .into_iter()
-      .map(|binding| format!("{} ({})", binding.description, binding.key))
-      .collect::<Vec<_>>()
-      .join(", ");
-    return Err(api_conflict(format!(
-      "帳票の生成に必要な項目が不足しています: {summary}"
-    )));
-  }
+  let _rows = validate_template_document_payload(descriptor, &document.document.payload)?;
 
   let output_dir = template_document_generated_dir(&state.runtime_dir, template_document_id);
   fs::create_dir_all(&output_dir).map_err(|err| api_internal(err.to_string()))?;
@@ -2305,16 +2433,27 @@ async fn fetch_template_document(
     return Ok(None);
   };
 
+  let document_family = row.get::<_, String>(1);
+  let template_key = row.get::<_, String>(2);
+  let descriptor = match resolve_template_document_descriptor(&document_family, &template_key) {
+    Ok(descriptor) => descriptor,
+    Err((_, message)) => unreachable!("invalid template document in DB: {message}"),
+  };
+  let payload =
+    normalize_template_document_payload(descriptor, &row.get::<_, serde_json::Value>(7));
+  let title = default_template_document_title(descriptor, &payload);
+
   Ok(Some(TemplateDocumentResponse {
     document: TemplateDocumentDetail {
       id: row.get::<_, String>(0),
-      document_family: row.get::<_, String>(1),
-      template_key: row.get::<_, String>(2),
+      document_family,
+      template_key,
       status: row.get::<_, String>(3),
-      title: row.get::<_, String>(4),
+      title,
       template_asset_path: row.get::<_, String>(5),
       template_version: row.get::<_, String>(6),
-      payload: row.get::<_, serde_json::Value>(7),
+      row_count: template_document_row_count(descriptor, &payload),
+      payload,
       created_at: row.get::<_, Option<String>>(8),
       updated_at: row.get::<_, Option<String>>(9),
     },
@@ -2548,9 +2687,8 @@ async fn template_document_print_page(
     }
   };
 
-  let svg_markup = match render_template_document_svg_markup(descriptor, &document.document.payload)
-  {
-    Ok(svg_markup) => svg_markup,
+  let rows = match validate_template_document_payload(descriptor, &document.document.payload) {
+    Ok(rows) => rows,
     Err((status, message)) => {
       return (
         status,
@@ -2560,7 +2698,22 @@ async fn template_document_print_page(
     }
   };
 
-  template_document_print_html(&document.document, descriptor, &svg_markup).into_response()
+  let mut svg_markups = Vec::with_capacity(rows.len());
+  for row in rows {
+    let svg_markup = match render_template_document_svg_markup(descriptor, &row) {
+      Ok(svg_markup) => svg_markup,
+      Err((status, message)) => {
+        return (
+          status,
+          template_document_error_html("帳票印刷画面の準備に失敗しました", &message, &edit_url),
+        )
+          .into_response();
+      }
+    };
+    svg_markups.push(svg_markup);
+  }
+
+  template_document_print_html(&document.document, descriptor, &svg_markups).into_response()
 }
 
 async fn healthz() -> impl IntoResponse {
@@ -2784,6 +2937,7 @@ async fn api_template_documents(
          title,
          template_asset_path,
          template_version,
+         payload,
          to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
        from template_documents
        order by updated_at desc, created_at desc
@@ -2795,15 +2949,26 @@ async fn api_template_documents(
 
   let documents = rows
     .into_iter()
-    .map(|row| TemplateDocumentListItem {
-      id: row.get::<_, String>(0),
-      document_family: row.get::<_, String>(1),
-      template_key: row.get::<_, String>(2),
-      status: row.get::<_, String>(3),
-      title: row.get::<_, String>(4),
-      template_asset_path: row.get::<_, String>(5),
-      template_version: row.get::<_, String>(6),
-      updated_at: row.get::<_, Option<String>>(7),
+    .map(|row| {
+      let document_family = row.get::<_, String>(1);
+      let template_key = row.get::<_, String>(2);
+      let descriptor = match resolve_template_document_descriptor(&document_family, &template_key) {
+        Ok(descriptor) => descriptor,
+        Err((_, message)) => unreachable!("invalid template document in DB: {message}"),
+      };
+      let payload =
+        normalize_template_document_payload(descriptor, &row.get::<_, serde_json::Value>(7));
+      TemplateDocumentListItem {
+        id: row.get::<_, String>(0),
+        document_family,
+        template_key,
+        status: row.get::<_, String>(3),
+        title: default_template_document_title(descriptor, &payload),
+        template_asset_path: row.get::<_, String>(5),
+        template_version: row.get::<_, String>(6),
+        row_count: template_document_row_count(descriptor, &payload),
+        updated_at: row.get::<_, Option<String>>(8),
+      }
     })
     .collect::<Vec<_>>();
 
@@ -2884,7 +3049,8 @@ async fn api_template_document_save(
   let descriptor =
     resolve_template_document_descriptor(&row.get::<_, String>(0), &row.get::<_, String>(1))?;
   let _status = row.get::<_, String>(2);
-  let title = normalize_template_document_title(&payload.title, descriptor, &payload.payload);
+  let normalized_payload = normalize_template_document_payload(descriptor, &payload.payload);
+  let title = normalize_template_document_title(&payload.title, descriptor, &normalized_payload);
 
   state
     .client
@@ -2893,7 +3059,7 @@ async fn api_template_document_save(
        set title = $1,
            payload = $2
        where id::text = $3",
-      &[&title, &payload.payload, &template_document_id],
+      &[&title, &normalized_payload, &template_document_id],
     )
     .await
     .map_err(|err| api_internal(err.to_string()))?;

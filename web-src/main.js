@@ -14,6 +14,7 @@ import {
   ISSUE_FAMILY_KEY,
   SHOGAI_KYOSAI_FAMILY_KEY,
   SHOGAI_KYOSAI_JOIN_RENEWAL_TEMPLATE_KEY,
+  blankTemplatePayloadRow,
   defaultTemplatePayload,
   familyDefinition,
   familyIndexPath,
@@ -21,10 +22,13 @@ import {
   missingTemplatePayloadKeys,
   normalizeFamilyKey,
   normalizeTemplatePayload,
+  templatePayloadActiveRowCount,
+  templatePayloadRows,
   templateDefinition,
   templateDocumentAutoTitle,
   templateLabel,
   templatePayloadText,
+  templateRowHasAnyValue,
 } from "./template-doc-registry.js";
 import {
   templateDocumentPdfFileName,
@@ -214,7 +218,10 @@ function normalizeIssue(issue) {
 function normalizeTemplateDocument(document = {}) {
   const documentFamily = document.document_family || SHOGAI_KYOSAI_FAMILY_KEY;
   const templateKey = document.template_key || SHOGAI_KYOSAI_JOIN_RENEWAL_TEMPLATE_KEY;
-  const payload = normalizeTemplatePayload(documentFamily, templateKey, document.payload || {});
+  const hasPayload = Object.prototype.hasOwnProperty.call(document, "payload");
+  const payload = hasPayload
+    ? normalizeTemplatePayload(documentFamily, templateKey, document.payload || {})
+    : undefined;
   return {
     id: document.id || "",
     document_family: documentFamily,
@@ -222,15 +229,70 @@ function normalizeTemplateDocument(document = {}) {
     status: document.status || "draft",
     title:
       String(document.title || "").trim() ||
-      templateDocumentAutoTitle(documentFamily, templateKey, payload),
+      templateDocumentAutoTitle(documentFamily, templateKey, payload || defaultTemplatePayload(documentFamily, templateKey)),
     template_asset_path:
       document.template_asset_path || templateDefinition(documentFamily, templateKey).template_asset_path,
     template_version:
       document.template_version || templateDefinition(documentFamily, templateKey).template_version,
     payload,
+    row_count:
+      Number.isFinite(document.row_count) && document.row_count >= 0
+        ? document.row_count
+        : templatePayloadActiveRowCount(documentFamily, templateKey, payload),
     created_at: document.created_at || "",
     updated_at: document.updated_at || "",
   };
+}
+
+function templateDocumentRows(document = state.templateDocument) {
+  if (!document) {
+    return [];
+  }
+  return templatePayloadRows(document.document_family, document.template_key, document.payload || {});
+}
+
+function templateDocumentRowCount(document = state.templateDocument) {
+  if (!document) {
+    return 0;
+  }
+  return templatePayloadActiveRowCount(document.document_family, document.template_key, document.payload || {});
+}
+
+function syncTemplateDocumentTitle() {
+  if (!state.templateDocument) {
+    return;
+  }
+  state.templateDocument.title = templateDocumentAutoTitle(
+    state.templateDocument.document_family,
+    state.templateDocument.template_key,
+    state.templateDocument.payload,
+  );
+  state.templateDocument.row_count = templateDocumentRowCount(state.templateDocument);
+}
+
+function syncTemplatePayloadTextFromDocument() {
+  if (!state.templateDocument) {
+    state.templatePayloadText = "";
+    return;
+  }
+  state.templatePayloadText = templatePayloadText(
+    state.templateDocument.document_family,
+    state.templateDocument.template_key,
+    state.templateDocument.payload,
+  );
+}
+
+function setTemplateDocumentPayload(payload) {
+  if (!state.templateDocument) {
+    return;
+  }
+  state.templateDocument.payload = normalizeTemplatePayload(
+    state.templateDocument.document_family,
+    state.templateDocument.template_key,
+    payload,
+  );
+  syncTemplateDocumentTitle();
+  syncTemplatePayloadTextFromDocument();
 }
 
 function normalizeAttachment(attachment = {}) {
@@ -312,7 +374,6 @@ function initialTemplateDocumentDraft(documentFamily, templateKey) {
   return normalizeTemplateDocument({
     document_family: documentFamily,
     template_key: templateKey,
-    title: templateDocumentAutoTitle(documentFamily, templateKey, payload),
     payload,
   });
 }
@@ -424,7 +485,11 @@ function templateDocumentPayloadFromState() {
   }
   const payload = parseTemplatePayloadText();
   return {
-    title: String(state.templateDocument.title || "").trim(),
+    title: templateDocumentAutoTitle(
+      state.templateDocument.document_family,
+      state.templateDocument.template_key,
+      payload,
+    ),
     payload,
   };
 }
@@ -436,7 +501,7 @@ function clearTemplatePreviewWarning() {
 
 function templatePreviewBlockingMessage(document = state.templateDocument) {
   const familyLabel = familyDefinition(document?.document_family || SHOGAI_KYOSAI_FAMILY_KEY).label;
-  return `${familyLabel}のプレビューと帳票PDF出力はまだ実行できません。左の PAYLOAD JSON に必須項目を入力してください。`;
+  return `${familyLabel}のプレビューと帳票PDF出力はまだ実行できません。左の契約者入力を埋めてください。`;
 }
 
 function renderTemplatePreviewMissingList(bindings = state.templatePreviewMissingBindings) {
@@ -447,8 +512,9 @@ function renderTemplatePreviewMissingList(bindings = state.templatePreviewMissin
     .map(
       (binding) => `
         <li>
+          ${binding.rowLabel ? `<span class="badge badge--draft">${escapeHtml(binding.rowLabel)}</span>` : ""}
           <span>${escapeHtml(binding.description)}</span>
-          <code>${escapeHtml(binding.key)}</code>
+          ${binding.key ? `<code>${escapeHtml(binding.key)}</code>` : ""}
         </li>
       `,
     )
@@ -462,7 +528,7 @@ function renderTemplatePayloadWarningMarkup() {
   return `
     <div class="template-warning-card" aria-live="polite">
       <strong>プレビュー前に入力が必要です</strong>
-      <p>次の必須項目を PAYLOAD JSON に入れると、右のプレビューと帳票PDF出力を再開できます。</p>
+      <p>次の必須項目を各行で埋めると、右のプレビューと帳票PDF出力を再開できます。</p>
       <ul class="template-warning-list">
         ${renderTemplatePreviewMissingList()}
       </ul>
@@ -475,7 +541,29 @@ function applyTemplatePreviewWarning(missingBindings, document = state.templateD
   state.templatePreviewMissingBindings = missingBindings.map((binding) => ({
     key: binding.key,
     description: binding.description,
+    rowIndex: Number.isInteger(binding.rowIndex) ? binding.rowIndex : null,
+    rowLabel: binding.rowLabel || "",
   }));
+}
+
+function templatePreviewIssuesByRow() {
+  return state.templatePreviewMissingBindings.reduce((map, issue) => {
+    if (!Number.isInteger(issue.rowIndex)) {
+      return map;
+    }
+    const current = map.get(issue.rowIndex) || [];
+    current.push(issue);
+    map.set(issue.rowIndex, current);
+    return map;
+  }, new Map());
+}
+
+function templatePreviewInvalidRowCount() {
+  const rowCount = templatePreviewIssuesByRow().size;
+  if (rowCount > 0) {
+    return rowCount;
+  }
+  return state.templatePreviewMissingBindings.length ? 1 : 0;
 }
 
 function updateTemplatePreviewWarningDom() {
@@ -1006,7 +1094,7 @@ function renderTemplateDocumentPreviewMarkup() {
   const previewBlocked = state.templatePreviewMissingBindings.length > 0;
   const placeholderMarkup = previewBlocked
     ? `
-        <p>左の PAYLOAD JSON に必須項目を入力すると、ここに生成済みの農作業傷害共済 PDF を表示できます。</p>
+        <p>左の契約者入力を埋めると、ここに生成済みの農作業傷害共済 PDF を表示できます。</p>
         <ul class="template-warning-list template-warning-list--preview">
           ${renderTemplatePreviewMissingList()}
         </ul>
@@ -1126,7 +1214,7 @@ function renderTemplateDocumentCards() {
               </div>
               <span class="issue-card-stat">${escapeHtml(document.template_version)}</span>
             </div>
-            <p class="issue-card-copy">テンプレ: ${escapeHtml(document.template_asset_path)} / 更新: ${escapeHtml(document.updated_at || "未保存")}</p>
+            <p class="issue-card-copy">テンプレ: ${escapeHtml(document.template_asset_path)} / 入力済み: ${escapeHtml(`${document.row_count || 0}件`)} / 更新: ${escapeHtml(document.updated_at || "未保存")}</p>
             <div class="issue-card-footer">
               <span class="issue-card-stat">${escapeHtml(document.status)}</span>
               <div class="issue-card-actions">
@@ -1186,7 +1274,7 @@ function renderTemplateFamilyPanel() {
       <div class="panel">
         <div class="panel-inner">
           <h2 class="section-title">新しい帳票を起こす</h2>
-          <p class="section-copy">テンプレ固定の SVG 帳票に JSON を bind して、1件ごとの PDF を作ります。</p>
+          <p class="section-copy">テンプレ固定の SVG 帳票へ契約者行を積み上げ、1行1ページの PDF をまとめて出します。</p>
           <div class="create-grid">
             ${templates
               .map(
@@ -1205,7 +1293,7 @@ function renderTemplateFamilyPanel() {
       <div class="panel">
         <div class="panel-inner">
           <h2 class="section-title">既存の帳票</h2>
-          <p class="section-copy">JSON 下書きを保持しながら、SVG bind プレビューと PDF 出力を繰り返せます。</p>
+          <p class="section-copy">契約者行を保持しながら、複数ページの SVG bind プレビューと PDF 出力を繰り返せます。</p>
           <div class="list-grid">${renderTemplateDocumentCards()}</div>
         </div>
       </div>
@@ -1504,6 +1592,87 @@ function renderEditor() {
   schedulePreview("render-editor");
 }
 
+function renderTemplateLedgerRow(document, definition, row, rowIndex, rowIssues = []) {
+  const rowFilled = templateRowHasAnyValue(document.document_family, document.template_key, row);
+  const issueSummary = rowIssues.map((issue) => issue.description).join(" / ");
+  return `
+    <article class="template-ledger-card ${rowIssues.length ? "is-invalid" : ""}">
+      <div class="template-ledger-row">
+        <div class="template-row-stamp">
+          <strong>${rowIndex + 1}</strong>
+          <small>${rowFilled ? "入力中" : "空欄"}</small>
+        </div>
+        ${definition.bindings
+          .map(
+            (binding) => `
+              <label class="template-ledger-cell" data-cell-key="${escapeHtml(binding.key)}">
+                <span class="template-ledger-mobile-label">${escapeHtml(binding.description)}</span>
+                <input
+                  type="text"
+                  aria-label="${escapeHtml(binding.description)}"
+                  inputmode="${escapeHtml(binding.inputmode || "text")}"
+                  placeholder="${escapeHtml(binding.placeholder || binding.description)}"
+                  value="${escapeHtml(row[binding.key] || "")}"
+                  data-template-row-index="${rowIndex}"
+                  data-template-row-field="${escapeHtml(binding.key)}"
+                >
+              </label>
+            `,
+          )
+          .join("")}
+        <button
+          class="ghost-button ghost-button--danger template-row-remove"
+          type="button"
+          data-remove-template-row="${rowIndex}"
+          aria-label="${escapeHtml(`${rowIndex + 1}行目を削除`)}"
+        >
+          -
+        </button>
+      </div>
+      ${
+        rowIssues.length
+          ? `
+            <div class="template-row-note">
+              <strong>${escapeHtml(`${rowIssues.length}項目不足`)}</strong>
+              <span>${escapeHtml(issueSummary)}</span>
+            </div>
+          `
+          : ""
+      }
+    </article>
+  `;
+}
+
+function renderTemplateLedgerMarkup(document, definition) {
+  const rows = templateDocumentRows(document);
+  const issuesByRow = templatePreviewIssuesByRow();
+  if (!rows.length) {
+    return `
+      <div class="empty-state empty-state--compact template-ledger-empty">
+        <p>まだ契約者行がありません。追加してから一括 PDF を組み立てます。</p>
+        <button class="primary-button" type="button" data-add-template-row>1件目を追加</button>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="template-ledger-scroll">
+      <div class="template-ledger-head" aria-hidden="true">
+        <span>行</span>
+        ${definition.bindings.map((binding) => `<span>${escapeHtml(binding.description)}</span>`).join("")}
+        <span>削除</span>
+      </div>
+      <div class="template-ledger-body">
+        ${rows
+          .map((row, rowIndex) =>
+            renderTemplateLedgerRow(document, definition, row, rowIndex, issuesByRow.get(rowIndex) || []),
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
 function renderTemplateDocumentEditor(skipPreview = false) {
   if (!state.templateDocument) {
     renderLoading("帳票編集画面を準備中です", "対象の帳票を取得しています。");
@@ -1512,6 +1681,9 @@ function renderTemplateDocumentEditor(skipPreview = false) {
 
   const document = state.templateDocument;
   const definition = templateDefinition(document.document_family, document.template_key);
+  const rows = templateDocumentRows(document);
+  const activeRowCount = templateDocumentRowCount(document);
+  const invalidRowCount = templatePreviewInvalidRowCount();
   const bindingRows = definition.bindings
     .map(
       (binding) => `
@@ -1529,7 +1701,7 @@ function renderTemplateDocumentEditor(skipPreview = false) {
         <div class="brand-block">
           <span class="eyebrow">TEMPLATE EDITOR</span>
           <h1 class="page-title">農作業傷害共済を編集する</h1>
-          <p class="page-lead">左で JSON を整え、右で SVG bind 結果の実際の PDF を確認します。</p>
+          <p class="page-lead">左で契約者行を積み上げ、右で 1行1ページの実PDFをまとめて確認します。</p>
         </div>
         <aside class="status-panel status-panel--editor">
           <div class="status-grid status-grid--editor">
@@ -1568,14 +1740,35 @@ function renderTemplateDocumentEditor(skipPreview = false) {
 
       <section class="workspace editor-layout editor-layout--template">
         <div class="editor-column">
-          <section class="card">
-            <h2 class="card-title">帳票の骨格</h2>
-            <p class="card-copy">タイトルは一覧や PDF ファイル名に使います。テンプレ版は作成時に固定済みです。</p>
-            <div class="form-grid">
-              <div class="field field--wide">
-                <label>タイトル</label>
-                <input id="template-document-title" value="${escapeHtml(document.title)}" placeholder="例: 農作業中傷害共済 加入更新調査 / 古川 司朗">
+          <section class="card template-summary-card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">帳票の骨格</h2>
+                <p class="card-copy">タイトルは PDF 出力日と入力済み件数で自動命名します。1行でも必須漏れがあると一括出力は止まります。</p>
               </div>
+              <span class="badge badge--accent" id="template-row-count-badge">${escapeHtml(`${activeRowCount}件入力済み`)}</span>
+            </div>
+            <div class="template-summary-hero">
+              <div class="template-summary-copy">
+                <span class="status-label">AUTO TITLE</span>
+                <strong class="template-auto-title" id="template-auto-title">${escapeHtml(document.title)}</strong>
+              </div>
+              <div class="template-kpi-grid">
+                <div class="template-kpi-card">
+                  <span>全行</span>
+                  <strong id="template-total-rows">${rows.length}</strong>
+                </div>
+                <div class="template-kpi-card">
+                  <span>入力済み</span>
+                  <strong id="template-active-rows">${activeRowCount}</strong>
+                </div>
+                <div class="template-kpi-card ${invalidRowCount ? "is-warning" : ""}" id="template-invalid-rows-card">
+                  <span>要補完</span>
+                  <strong id="template-invalid-rows">${invalidRowCount}</strong>
+                </div>
+              </div>
+            </div>
+            <div class="form-grid">
               <div class="field">
                 <label>ファミリー</label>
                 <input value="${escapeHtml(familyDefinition(document.document_family).label)}" disabled>
@@ -1595,19 +1788,33 @@ function renderTemplateDocumentEditor(skipPreview = false) {
             </div>
           </section>
 
+          <section class="card template-ledger-panel">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">契約者入力</h2>
+                <p class="card-copy">下の 1 行がそのまま PDF 1 ページになります。右端の <code>-</code> で削除、上の追加で行を増やします。</p>
+              </div>
+              <div class="editor-actions-group">
+                <button class="ghost-button" type="button" id="reset-template-payload-button">行を初期化</button>
+                <button class="primary-button" type="button" data-add-template-row>契約者を追加</button>
+              </div>
+            </div>
+            <div id="template-payload-warning">${renderTemplatePayloadWarningMarkup()}</div>
+            ${renderTemplateLedgerMarkup(document, definition)}
+          </section>
+
           <section class="card">
             <div class="card-header">
               <div>
-                <h2 class="card-title">JSON 入力</h2>
-                <p class="card-copy">保存時は JSON 構文だけ見ます。必須項目が足りない間は、右のプレビューと帳票PDF出力を止めて不足項目を案内します。</p>
+                <h2 class="card-title">詳細 JSON</h2>
+                <p class="card-copy">フォームと同じ内容です。必要なときだけ直接調整できます。</p>
               </div>
-              <button class="ghost-button" type="button" id="reset-template-payload-button">初期JSONに戻す</button>
+              <span class="badge badge--draft">advanced</span>
             </div>
-            <div id="template-payload-warning">${renderTemplatePayloadWarningMarkup()}</div>
             <div class="field field--wide">
               <label>PAYLOAD JSON</label>
               <textarea id="template-document-payload" class="json-editor" spellcheck="false">${escapeHtml(state.templatePayloadText)}</textarea>
-              <p class="field-hint">最上位は object 固定です。値は文字列で入れてください。</p>
+              <p class="field-hint">最上位は object 固定です。通常は上の契約者入力を使ってください。</p>
             </div>
           </section>
 
@@ -1668,13 +1875,14 @@ function renderTemplateDocumentPrintPage(skipPreview = false) {
   }
 
   const document = state.templateDocument;
+  const activeRowCount = templateDocumentRowCount(document);
   app.innerHTML = `
     <main class="print-shell-app">
       <header class="print-header">
         <div>
           <span class="eyebrow">TEMPLATE PRINT</span>
           <h1 class="print-title">${escapeHtml(document.title || "農作業傷害共済")}</h1>
-          <p class="print-copy">${escapeHtml(templateLabel(document.document_family, document.template_key))} / ${escapeHtml(document.template_version)}</p>
+          <p class="print-copy">${escapeHtml(templateLabel(document.document_family, document.template_key))} / ${escapeHtml(document.template_version)} / ${escapeHtml(`${activeRowCount}ページ予定`)}</p>
         </div>
         <div class="preview-actions">
           <a class="ghost-link" href="${templateDocumentEditUrl(document.id)}">編集へ戻る</a>
@@ -1957,6 +2165,37 @@ function updateSaveStateText() {
     return;
   }
   node.textContent = state.saving ? "保存中…" : state.dirty ? "未保存の変更あり" : "保存済み";
+}
+
+function updateTemplateDocumentSummaryDom() {
+  if (!state.templateDocument) {
+    return;
+  }
+  const totalRows = templateDocumentRows(state.templateDocument).length;
+  const activeRows = templateDocumentRowCount(state.templateDocument);
+  const invalidRows = templatePreviewInvalidRowCount();
+
+  const titleNode = document.querySelector("#template-auto-title");
+  if (titleNode) {
+    titleNode.textContent = state.templateDocument.title;
+  }
+  const badgeNode = document.querySelector("#template-row-count-badge");
+  if (badgeNode) {
+    badgeNode.textContent = `${activeRows}件入力済み`;
+  }
+  const totalRowsNode = document.querySelector("#template-total-rows");
+  if (totalRowsNode) {
+    totalRowsNode.textContent = String(totalRows);
+  }
+  const activeRowsNode = document.querySelector("#template-active-rows");
+  if (activeRowsNode) {
+    activeRowsNode.textContent = String(activeRows);
+  }
+  const invalidRowsNode = document.querySelector("#template-invalid-rows");
+  if (invalidRowsNode) {
+    invalidRowsNode.textContent = String(invalidRows);
+  }
+  document.querySelector("#template-invalid-rows-card")?.classList.toggle("is-warning", invalidRows > 0);
 }
 
 function markDirty() {
@@ -2273,39 +2512,94 @@ function bindTemplateDocumentEvents() {
     if (!state.templateDocument) {
       return;
     }
-    const payload = defaultTemplatePayload(
+    setTemplateDocumentPayload(defaultTemplatePayload(
       state.templateDocument.document_family,
       state.templateDocument.template_key,
-    );
-    state.templatePayloadText = templatePayloadText(
-      state.templateDocument.document_family,
-      state.templateDocument.template_key,
-      payload,
-    );
-    if (!String(state.templateDocument.title || "").trim()) {
-      state.templateDocument.title = templateDocumentAutoTitle(
-        state.templateDocument.document_family,
-        state.templateDocument.template_key,
-        payload,
-      );
-    }
+    ));
     markDirty();
     renderTemplateDocumentEditor();
   });
 
-  document.querySelector("#template-document-title")?.addEventListener("input", (event) => {
-    if (!state.templateDocument) {
-      return;
-    }
-    state.templateDocument.title = event.currentTarget.value;
-    markDirty();
-    schedulePreview("template-title");
+  document.querySelectorAll("[data-add-template-row]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!state.templateDocument) {
+        return;
+      }
+      const rows = templateDocumentRows(state.templateDocument);
+      rows.push(blankTemplatePayloadRow(state.templateDocument.document_family, state.templateDocument.template_key));
+      setTemplateDocumentPayload({ rows });
+      markDirty();
+      renderTemplateDocumentEditor(true);
+      schedulePreview("template-row-add");
+    });
+  });
+
+  document.querySelectorAll("[data-remove-template-row]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!state.templateDocument) {
+        return;
+      }
+      const rowIndex = Number(button.getAttribute("data-remove-template-row"));
+      const rows = templateDocumentRows(state.templateDocument).filter((_, index) => index !== rowIndex);
+      setTemplateDocumentPayload({ rows });
+      markDirty();
+      renderTemplateDocumentEditor(true);
+      schedulePreview("template-row-remove");
+    });
+  });
+
+  document.querySelectorAll("[data-template-row-field]").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      if (!state.templateDocument) {
+        return;
+      }
+      const rowIndex = Number(event.currentTarget.getAttribute("data-template-row-index"));
+      const field = event.currentTarget.getAttribute("data-template-row-field");
+      if (!field) {
+        return;
+      }
+      const rows = templateDocumentRows(state.templateDocument);
+      if (!rows[rowIndex]) {
+        return;
+      }
+      rows[rowIndex][field] = event.currentTarget.value;
+      setTemplateDocumentPayload({ rows });
+      const payloadEditor = document.querySelector("#template-document-payload");
+      if (payloadEditor) {
+        payloadEditor.value = state.templatePayloadText;
+      }
+      markDirty();
+      updateTemplateDocumentSummaryDom();
+      schedulePreview(`template-row-${field}`);
+    });
   });
 
   document.querySelector("#template-document-payload")?.addEventListener("input", (event) => {
     state.templatePayloadText = event.currentTarget.value;
+    try {
+      if (!state.templateDocument) {
+        return;
+      }
+      state.templateDocument.payload = parseTemplatePayloadText(event.currentTarget.value);
+      syncTemplateDocumentTitle();
+      updateTemplateDocumentSummaryDom();
+    } catch {
+      // Keep the raw text as-is until save/preview validation runs.
+    }
     markDirty();
     schedulePreview("template-json");
+  });
+
+  document.querySelector("#template-document-payload")?.addEventListener("change", (event) => {
+    if (!state.templateDocument) {
+      return;
+    }
+    try {
+      setTemplateDocumentPayload(parseTemplatePayloadText(event.currentTarget.value));
+      renderTemplateDocumentEditor(true);
+    } catch {
+      // Ignore invalid JSON on blur; save/preview will surface the error.
+    }
   });
 }
 
@@ -2433,11 +2727,7 @@ async function loadIssueDocument() {
 async function loadTemplateDocument() {
   const response = await api(`/api/template-documents/${boot.templateDocumentId}`);
   state.templateDocument = normalizeTemplateDocument(response.document);
-  state.templatePayloadText = templatePayloadText(
-    state.templateDocument.document_family,
-    state.templateDocument.template_key,
-    state.templateDocument.payload,
-  );
+  syncTemplatePayloadTextFromDocument();
 }
 
 async function loadEditor() {
@@ -2484,7 +2774,7 @@ async function loadTemplateDocumentEditor() {
   state.error = "";
   state.notice = "";
   clearTemplatePreviewWarning();
-  renderLoading("帳票編集画面を読込中です", "JSON 下書きと SVG テンプレ情報を取得しています。");
+  renderLoading("帳票編集画面を読込中です", "契約者行と SVG テンプレ情報を取得しています。");
   try {
     const [meta] = await Promise.all([api("/api/meta"), loadTemplateDocument()]);
     state.meta = meta;
@@ -2565,6 +2855,7 @@ async function saveTemplateDocumentEditor({
     renderTemplateDocumentEditor(true);
     return false;
   }
+  setTemplateDocumentPayload(payload);
 
   state.saving = true;
   state.error = "";
@@ -2581,15 +2872,11 @@ async function saveTemplateDocumentEditor({
       method: "PUT",
       body: {
         title: state.templateDocument.title,
-        payload,
+        payload: state.templateDocument.payload,
       },
     });
     state.templateDocument = normalizeTemplateDocument(response.document);
-    state.templatePayloadText = templatePayloadText(
-      state.templateDocument.document_family,
-      state.templateDocument.template_key,
-      state.templateDocument.payload,
-    );
+    syncTemplatePayloadTextFromDocument();
     state.templateDocuments = state.templateDocuments
       .filter((document) => document.id !== state.templateDocument.id)
       .concat(state.templateDocument)
