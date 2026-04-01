@@ -1915,6 +1915,10 @@ fn legacy_thumbnail_mime_type(metadata: &AttachmentStorageMetadata) -> String {
   }
 }
 
+fn bytes_look_like_png(bytes: &[u8]) -> bool {
+  bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+}
+
 fn render_pdf_thumbnail_png(
   state: &AppState,
   attachment_id: &str,
@@ -2019,22 +2023,31 @@ async fn fetch_attachment_thumbnail_bytes(
     .await
     .map_err(|err| api_internal(err.to_string()))?
     .ok_or_else(|| api_not_found("attachment not found"))?;
+  let pdf_attachment = attachment_display_kind(&metadata.mime_type) == "pdf";
 
   if let Some((mime_type, bytes)) = fetch_attachment_thumbnail_cache(state, attachment_id).await? {
     if !bytes.is_empty() {
-      return Ok((mime_type, bytes));
+      if pdf_attachment && !bytes_look_like_png(&bytes) {
+        // Ignore stale caches that were backfilled with PDF bytes while claiming image/png.
+      } else if pdf_attachment {
+        return Ok(("image/png".to_string(), bytes));
+      } else {
+        return Ok((mime_type, bytes));
+      }
     }
   }
 
   if let Some(bytes) =
     read_legacy_attachment_file(&state.runtime_dir, &metadata.legacy_thumbnail_path)?
   {
-    let mime_type = legacy_thumbnail_mime_type(&metadata);
-    upsert_attachment_thumbnail_cache(&state.client, attachment_id, &mime_type, &bytes).await?;
-    return Ok((mime_type, bytes));
+    if !pdf_attachment || bytes_look_like_png(&bytes) {
+      let mime_type = legacy_thumbnail_mime_type(&metadata);
+      upsert_attachment_thumbnail_cache(&state.client, attachment_id, &mime_type, &bytes).await?;
+      return Ok((mime_type, bytes));
+    }
   }
 
-  if attachment_display_kind(&metadata.mime_type) != "pdf" {
+  if !pdf_attachment {
     let (mime_type, bytes) = fetch_attachment_original_bytes(state, attachment_id).await?;
     upsert_attachment_thumbnail_cache(&state.client, attachment_id, &mime_type, &bytes).await?;
     return Ok((mime_type, bytes));
@@ -2103,7 +2116,11 @@ async fn backfill_legacy_attachment_storage(client: &Client, storage_dir: &Path)
       if let Some(bytes) = read_legacy_attachment_file(storage_dir, &legacy_thumbnail_path)
         .map_err(|err| eyre!(err.1))?
       {
-        let cache_mime = if attachment_display_kind(&mime_type) == "pdf" {
+        let pdf_attachment = attachment_display_kind(&mime_type) == "pdf";
+        if pdf_attachment && !bytes_look_like_png(&bytes) {
+          continue;
+        }
+        let cache_mime = if pdf_attachment {
           "image/png".to_string()
         } else {
           mime_type.clone()

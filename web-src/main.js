@@ -951,6 +951,34 @@ function clipboardPasteItemIdFromNode(node) {
   return node.closest("[data-paste-item-id]")?.getAttribute("data-paste-item-id") || "";
 }
 
+function errorMessage(error, fallback = "不明なエラー") {
+  if (error instanceof Error && String(error.message || "").trim()) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+  if (error && typeof error === "object") {
+    const message = error.message;
+    if (typeof message === "string" && message.trim()) {
+      return message;
+    }
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== "{}") {
+        return serialized;
+      }
+    } catch {
+      // Ignore serialization failures and fall through to stringification.
+    }
+    const text = String(error);
+    if (text && text !== "[object Object]") {
+      return text;
+    }
+  }
+  return fallback;
+}
+
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   let body = options.body;
@@ -1005,6 +1033,20 @@ function renderLoading(title, copy) {
       </section>
     </main>
   `;
+}
+
+function renderGlobalFlashMarkup() {
+  return `
+    ${state.error ? `<div class="flash flash--error">${escapeHtml(state.error)}</div>` : ""}
+    ${state.notice ? `<div class="flash flash--info">${escapeHtml(state.notice)}</div>` : ""}
+  `;
+}
+
+function updateGlobalFlashDom() {
+  const host = document.querySelector("#global-flash-stack");
+  if (host) {
+    host.innerHTML = renderGlobalFlashMarkup();
+  }
 }
 
 function renderAttachmentViewerHtml() {
@@ -1806,8 +1848,7 @@ function renderEditor(skipPreview = false) {
         </div>
       </div>
 
-      ${state.error ? `<div class="flash flash--error">${escapeHtml(state.error)}</div>` : ""}
-      ${state.notice ? `<div class="flash flash--info">${escapeHtml(state.notice)}</div>` : ""}
+      <div id="global-flash-stack">${renderGlobalFlashMarkup()}</div>
       ${renderIssueReadonlyBanner(issue)}
 
       <section class="workspace editor-layout">
@@ -2037,9 +2078,8 @@ function renderTemplateDocumentEditor(skipPreview = false) {
         </div>
       </div>
 
-      ${state.error ? `<div class="flash flash--error">${escapeHtml(state.error)}</div>` : ""}
+      <div id="global-flash-stack">${renderGlobalFlashMarkup()}</div>
       <div id="template-preview-warning-flash">${state.warning ? `<div class="flash flash--warning">${escapeHtml(state.warning)}</div>` : ""}</div>
-      ${state.notice ? `<div class="flash flash--info">${escapeHtml(state.notice)}</div>` : ""}
 
       <section class="workspace editor-layout editor-layout--template">
         <div class="editor-column">
@@ -2161,6 +2201,7 @@ function renderPrintPage(skipPreview = false) {
           <a class="ghost-link" href="/issues/${escapeHtml(state.issue.id)}/edit">編集へ戻る</a>
         </div>
       </header>
+      <div id="global-flash-stack">${renderGlobalFlashMarkup()}</div>
       <section class="print-preview-panel">
         ${renderNoticePreviewMarkup()}
       </section>
@@ -2428,14 +2469,14 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
     clearTemplatePreviewWarning();
     state.previewPending = false;
     state.previewImages = [];
-    state.error = `プレビュー生成に失敗しました: ${error.message}`;
+    state.error = `プレビュー生成に失敗しました: ${errorMessage(error)}`;
     updatePreviewDom();
     if (boot.view === "edit") {
-      renderEditor();
+      updateGlobalFlashDom();
     } else if (boot.view === "template-edit") {
       renderTemplateDocumentEditor(true);
     } else if (boot.view === "print") {
-      renderPrintPage();
+      updateGlobalFlashDom();
     } else if (boot.view === "template-print") {
       renderTemplateDocumentPrintPage(true);
     }
@@ -2567,10 +2608,7 @@ function clearPreviewErrorMessage() {
     return;
   }
   state.error = "";
-  const flash = document.querySelector(".flash--error");
-  if (flash && String(flash.textContent || "").startsWith("プレビュー生成に失敗しました:")) {
-    flash.remove();
-  }
+  updateGlobalFlashDom();
 }
 
 function bindPreviewButtons() {
