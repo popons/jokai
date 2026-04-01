@@ -58,6 +58,8 @@ const TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL: &str = "join_renewal";
 const TEMPLATE_DOCUMENT_ASSET_PATH_SHOGAI_KYOSAI: &str = "20260319-templ-shogai-kyosai.svg";
 const TEMPLATE_DOCUMENT_VERSION_SHOGAI_KYOSAI: &str = "20260319";
 const TEMPLATE_DOCUMENT_STATUS_DRAFT: &str = "draft";
+const ISSUE_STATUS_DRAFT: &str = "draft";
+const ISSUE_STATUS_PUBLISHED: &str = "published";
 const NOTICE_PREVIEW_RENDER_DPI: u16 = 216;
 static EMBEDDED_FRONTEND_DIST: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/web-dist");
 static EMBEDDED_PAPER_FONT_BODY_BYTES: &[u8] = include_bytes!(concat!(
@@ -1680,6 +1682,38 @@ async fn fetch_issue_source_version(
   Ok(row.map(|row| row.get::<_, i64>(0)))
 }
 
+async fn fetch_issue_status(
+  client: &Client,
+  issue_id: &str,
+) -> std::result::Result<Option<String>, (StatusCode, String)> {
+  client
+    .query_opt(
+      "select status
+       from issues
+       where id::text = $1",
+      &[&issue_id],
+    )
+    .await
+    .map(|row| row.map(|row| row.get::<_, String>(0)))
+    .map_err(|err| api_internal(err.to_string()))
+}
+
+async fn ensure_issue_is_mutable(
+  client: &Client,
+  issue_id: &str,
+  published_message: &str,
+) -> std::result::Result<(), (StatusCode, String)> {
+  let Some(status) = fetch_issue_status(client, issue_id).await? else {
+    return Err(api_not_found("issue not found"));
+  };
+
+  if status == ISSUE_STATUS_PUBLISHED {
+    return Err(api_conflict(published_message));
+  }
+
+  Ok(())
+}
+
 async fn bump_issue_source_version(
   client: &Client,
   issue_id: &str,
@@ -3125,10 +3159,11 @@ async fn api_create_issue(
     .client
     .query_one(
       "insert into issues (issue_type, status, title, issue_month, place)
-       values ($1, 'draft', $2, date_trunc('month', current_date)::date, $3)
+       values ($1, $2, $3, date_trunc('month', current_date)::date, $4)
        returning id::text",
       &[
         &payload.issue_type,
+        &ISSUE_STATUS_DRAFT,
         &default_issue_title(&payload.issue_type),
         &DEFAULT_MEETING_PLACE,
       ],
@@ -3345,23 +3380,12 @@ async fn api_issue_save(
     validate_block_kind(&block.block_kind)?;
   }
 
-  let status_row = state
-    .client
-    .query_opt(
-      "select status from issues where id::text = $1",
-      &[&issue_id],
-    )
-    .await
-    .map_err(|err| api_internal(err.to_string()))?;
-
-  let Some(status_row) = status_row else {
-    return Err(api_not_found("issue not found"));
-  };
-
-  let current_status: String = status_row.get(0);
-  if current_status == "published" {
-    return Err(api_conflict("公開済みの案内は現在の画面から編集できません"));
-  }
+  ensure_issue_is_mutable(
+    &state.client,
+    &issue_id,
+    "発行済みの案内は現在の画面から編集できません",
+  )
+  .await?;
 
   let issue_month = normalize_month_value(&payload.issue_month);
   let meeting_date = payload.meeting_date.trim().to_string();
@@ -3715,6 +3739,40 @@ async fn api_issue_save(
   Ok(Json(document))
 }
 
+async fn api_issue_publish(
+  State(state): State<Arc<AppState>>,
+  RoutePath(issue_id): RoutePath<String>,
+) -> ApiResult<IssueDocumentResponse> {
+  let updated = state
+    .client
+    .execute(
+      "update issues
+       set status = $1
+       where id::text = $2
+         and status = $3",
+      &[&ISSUE_STATUS_PUBLISHED, &issue_id, &ISSUE_STATUS_DRAFT],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  if updated == 0 {
+    let Some(status) = fetch_issue_status(&state.client, &issue_id).await? else {
+      return Err(api_not_found("issue not found"));
+    };
+    if status == ISSUE_STATUS_PUBLISHED {
+      return Err(api_conflict("この案内は既に発行済みです"));
+    }
+    return Err(api_conflict("案内を発行できませんでした"));
+  }
+
+  let document = fetch_issue_document(&state.client, &issue_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .ok_or_else(|| api_not_found("issue not found after publish"))?;
+
+  Ok(Json(document))
+}
+
 async fn duplicate_issue_children(
   state: &Arc<AppState>,
   source_issue_id: &str,
@@ -4035,23 +4093,7 @@ async fn api_issue_delete(
   State(state): State<Arc<AppState>>,
   RoutePath(issue_id): RoutePath<String>,
 ) -> ApiResult<DeleteIssueResponse> {
-  let status_row = state
-    .client
-    .query_opt(
-      "select status from issues where id::text = $1",
-      &[&issue_id],
-    )
-    .await
-    .map_err(|err| api_internal(err.to_string()))?;
-
-  let Some(status_row) = status_row else {
-    return Err(api_not_found("issue not found"));
-  };
-
-  let status = status_row.get::<_, String>(0);
-  if status == "published" {
-    return Err(api_conflict("公開済みの案内は削除できません"));
-  }
+  ensure_issue_is_mutable(&state.client, &issue_id, "発行済みの案内は削除できません").await?;
 
   state
     .client
@@ -4127,21 +4169,22 @@ async fn api_issue_duplicate(
        )
        values (
          $1,
-         'draft',
          $2,
          $3,
-         nullif($4, '')::date,
+         $4,
          nullif($5, '')::date,
-         nullif($6, '')::time,
-         $7,
+         nullif($6, '')::date,
+         nullif($7, '')::time,
          $8,
          $9,
-         nullif($10, '')::uuid,
+         $10,
+         nullif($11, '')::uuid,
          null
        )
        returning id::text",
       &[
         &issue_type,
+        &ISSUE_STATUS_DRAFT,
         &duplicated_title,
         &agenda_label,
         &issue_month,
@@ -4193,7 +4236,14 @@ async fn ensure_first_item_for_block(
     .map_err(|err| api_internal(err.to_string()))?;
 
   if let Some(row) = row {
-    return Ok((row.get::<_, String>(0), row.get::<_, String>(1)));
+    let issue_id = row.get::<_, String>(1);
+    ensure_issue_is_mutable(
+      &state.client,
+      &issue_id,
+      "発行済みの案内は資料を変更できません",
+    )
+    .await?;
+    return Ok((row.get::<_, String>(0), issue_id));
   }
 
   let block_row = state
@@ -4206,6 +4256,12 @@ async fn ensure_first_item_for_block(
     .map_err(|err| api_internal(err.to_string()))?
     .ok_or_else(|| api_not_found("block not found"))?;
   let issue_id = block_row.get::<_, String>(0);
+  ensure_issue_is_mutable(
+    &state.client,
+    &issue_id,
+    "発行済みの案内は資料を変更できません",
+  )
+  .await?;
   let inserted = state
     .client
     .query_one(
@@ -4348,6 +4404,12 @@ async fn api_item_attachment_upload(
     .ok_or_else(|| api_not_found("item not found"))?;
   let block_id = item_row.get::<_, String>(0);
   let issue_id = item_row.get::<_, String>(1);
+  ensure_issue_is_mutable(
+    &state.client,
+    &issue_id,
+    "発行済みの案内は資料を変更できません",
+  )
+  .await?;
 
   let mut uploaded = false;
   while let Some(field) = multipart
@@ -4463,6 +4525,12 @@ async fn api_attachment_delete(
     .ok_or_else(|| api_not_found("attachment not found"))?;
 
   let issue_id = attachment_row.get::<_, String>(0);
+  ensure_issue_is_mutable(
+    &state.client,
+    &issue_id,
+    "発行済みの案内は資料を変更できません",
+  )
+  .await?;
 
   state
     .client
@@ -4567,6 +4635,7 @@ async fn run_web(args: WebArgs) -> Result<()> {
         .put(api_issue_save)
         .delete(api_issue_delete),
     )
+    .route("/api/issues/{id}/publish", post(api_issue_publish))
     .route("/api/issues/{id}/duplicate", post(api_issue_duplicate))
     .route(
       "/api/issues/{id}/list-thumbnail",

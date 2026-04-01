@@ -51,6 +51,10 @@ const issueTypeLabels = {
   no_meeting: "常会なし",
   one_off: "単発案内",
 };
+const issueStatusLabels = {
+  draft: "下書き",
+  published: "発行済み",
+};
 const DEFAULT_AGENDA_LABEL = "常会事項";
 
 const blockKindLabels = {
@@ -94,6 +98,7 @@ const state = {
   selectedAttachmentId: "",
   loading: true,
   saving: false,
+  publishing: false,
   dirty: false,
   notice: "",
   error: "",
@@ -228,7 +233,7 @@ function normalizeIssue(issue) {
   return {
     id: issue.id,
     issue_type: issue.issue_type || "normal",
-    status: issue.status || "draft",
+    status: normalizeIssueStatus(issue.status),
     title: issue.title || "",
     agenda_label: issue.agenda_label || DEFAULT_AGENDA_LABEL,
     issue_month: issue.issue_month ? issue.issue_month.slice(0, 7) : "",
@@ -245,7 +250,7 @@ function normalizeIssueListItem(issue = {}) {
   return {
     id: issue.id || "",
     issue_type: issue.issue_type || "normal",
-    status: issue.status || "draft",
+    status: normalizeIssueStatus(issue.status),
     title: issue.title || "",
     issue_month: issue.issue_month || "",
     place: issue.place || "",
@@ -454,6 +459,82 @@ function issueSummaryLine(issue) {
   const date = issue.meeting_date ? dateLabel(issue.meeting_date) : "日付未設定";
   const time = issue.meeting_time ? ` / ${issue.meeting_time}` : "";
   return `${date}${time}`;
+}
+
+function normalizeIssueStatus(value) {
+  return value === "published" ? "published" : "draft";
+}
+
+function issueStatusLabel(status) {
+  return issueStatusLabels[normalizeIssueStatus(status)] || String(status || "").trim() || issueStatusLabels.draft;
+}
+
+function issueStatusBadgeClass(status) {
+  return normalizeIssueStatus(status) === "published" ? "badge--published" : "badge--draft";
+}
+
+function isIssuePublished(issue = state.issue) {
+  return normalizeIssueStatus(issue?.status) === "published";
+}
+
+function issueEditorReadOnly(issue = state.issue) {
+  return isIssuePublished(issue);
+}
+
+function issuePrimaryLinkLabel(issue = state.issue) {
+  return isIssuePublished(issue) ? "閲覧へ" : "編集へ";
+}
+
+function issuePublishedStat(issue = state.issue) {
+  return issue?.published_at ? `発行: ${issue.published_at}` : "発行前の下書き";
+}
+
+function editorSaveStateText() {
+  if (state.publishing) {
+    return "発行中…";
+  }
+  if (state.saving) {
+    return "保存中…";
+  }
+  if (boot.view === "edit" && isIssuePublished()) {
+    return "発行済み・読取専用";
+  }
+  return state.dirty ? "未保存の変更あり" : "保存済み";
+}
+
+function disabledAttr(disabled) {
+  return disabled ? "disabled" : "";
+}
+
+function renderIssueReadonlyBanner(issue = state.issue) {
+  if (!issueEditorReadOnly(issue)) {
+    return "";
+  }
+  const publishedSummary = issue?.published_at
+    ? `${issue.published_at} に発行済みです。`
+    : "この案内は発行済みです。";
+  return `<div class="flash flash--warning">${escapeHtml(`${publishedSummary} この画面では直接編集できません。修正は「複製して編集」から新しい下書きで行ってください。`)}</div>`;
+}
+
+async function syncIssueAfterReadonlyConflict(
+  error,
+  noticeMessage = "既に発行済みのため最新状態を再読込しました。",
+) {
+  const message = String(error?.message || "");
+  if (!boot.issueId || (!message.includes("発行済み") && !message.includes("公開済み"))) {
+    return false;
+  }
+  try {
+    await loadIssueDocument();
+    state.dirty = false;
+    state.error = "";
+    state.notice = noticeMessage;
+    ensureSelectedAttachment();
+    return true;
+  } catch (reloadError) {
+    state.error = `${message} / 再読込にも失敗しました: ${reloadError.message}`;
+    return false;
+  }
 }
 
 function payloadFromState() {
@@ -776,6 +857,9 @@ async function uploadAttachmentFile(itemId, file, successMessage = "資料を追
     ensureSelectedAttachment();
     return true;
   } catch (error) {
+    if (await syncIssueAfterReadonlyConflict(error)) {
+      return false;
+    }
     state.error = error.message;
     return false;
   } finally {
@@ -929,11 +1013,26 @@ function itemMarker(index) {
   return itemIndexLabels[index] || `${index + 1}.`;
 }
 
-function renderAttachmentList(item, blockIndex, itemIndex) {
+function renderAttachmentList(item, blockIndex, itemIndex, readOnly = issueEditorReadOnly()) {
   const attachments = item.attachments || [];
   const itemId = item.id ? escapeHtml(item.id) : "";
   const thumbScalePercent = normalizeItemThumbnailScalePercent(item.thumb_scale_percent);
-  const thumbScaleDisabled = !attachments.length;
+  const thumbScaleDisabled = readOnly || !attachments.length;
+  const uploadDisabled = readOnly || !item.id;
+  const pasteDisabled = readOnly || !item.id;
+  const uploadLabel = readOnly
+    ? "発行済みのため資料変更できません"
+    : item.id
+      ? "PDF / 画像を追加"
+      : "保存後に資料追加できます";
+  const pasteHelp = readOnly
+    ? "発行済みのため貼り付けできません"
+    : item.id
+      ? "Ctrl+V / Cmd+V で画像を追加"
+      : "保存後に貼り付けできます";
+  const attachmentHint = readOnly
+    ? "発行済みの案内では資料の追加・削除はできません。原本閲覧だけ利用できます。"
+    : "Clipboard は画像のみ対応、複数画像がある場合は先頭1枚だけ登録します。";
   const items = attachments.length
     ? attachments
         .map(
@@ -943,7 +1042,7 @@ function renderAttachmentList(item, blockIndex, itemIndex) {
                 <span>${escapeHtml(attachment.original_filename)}</span>
                 <small>${escapeHtml(attachment.display_kind.toUpperCase())}</small>
               </button>
-              <button class="ghost-button ghost-button--danger" type="button" data-delete-attachment="${attachment.id}">削除</button>
+              <button class="ghost-button ghost-button--danger" type="button" data-delete-attachment="${attachment.id}" ${disabledAttr(readOnly)}>削除</button>
             </li>
           `,
         )
@@ -962,41 +1061,41 @@ function renderAttachmentList(item, blockIndex, itemIndex) {
           max="${ITEM_THUMBNAIL_SCALE_LIMITS.max}"
           step="${ITEM_THUMBNAIL_SCALE_LIMITS.step}"
           value="${thumbScalePercent}"
-          ${thumbScaleDisabled ? "disabled" : ""}
+          ${disabledAttr(thumbScaleDisabled)}
         >
         <span class="attachment-scale-value" data-item-thumb-scale-value="${blockIndex}:${itemIndex}">${escapeHtml(`${thumbScalePercent}%`)}</span>
       </div>
       <div class="attachment-input-grid">
-        <label class="upload-dropzone">
-          <input data-upload-item-id="${itemId}" type="file" accept="application/pdf,image/*" ${item.id ? "" : "disabled"}>
-          <span>${item.id ? "PDF / 画像を追加" : "保存後に資料追加できます"}</span>
+        <label class="upload-dropzone ${uploadDisabled ? "is-disabled" : ""}">
+          <input data-upload-item-id="${itemId}" type="file" accept="application/pdf,image/*" ${disabledAttr(uploadDisabled)}>
+          <span>${uploadLabel}</span>
         </label>
         <div
-          class="attachment-paste-target ${item.id ? "" : "is-disabled"}"
+          class="attachment-paste-target ${pasteDisabled ? "is-disabled" : ""}"
           data-paste-item-id="${itemId}"
-          tabindex="${item.id ? "0" : "-1"}"
-          aria-disabled="${item.id ? "false" : "true"}"
+          tabindex="${pasteDisabled ? "-1" : "0"}"
+          aria-disabled="${pasteDisabled ? "true" : "false"}"
         >
           <strong>ここで貼り付け</strong>
-          <small>${item.id ? "Ctrl+V / Cmd+V で画像を追加" : "保存後に貼り付けできます"}</small>
+          <small>${pasteHelp}</small>
         </div>
         <button
           class="ghost-button attachment-clipboard-button"
           type="button"
           data-clipboard-upload-item-id="${itemId}"
           data-paste-item-id="${itemId}"
-          ${item.id ? "" : "disabled"}
+          ${disabledAttr(pasteDisabled)}
         >
           Clipboardから追加
         </button>
       </div>
-      <p class="attachment-hint">Clipboard は画像のみ対応、複数画像がある場合は先頭1枚だけ登録します。</p>
+      <p class="attachment-hint">${attachmentHint}</p>
       <ul class="attachment-list">${items}</ul>
     </div>
   `;
 }
 
-function renderSupplementRows(item, blockIndex, itemIndex) {
+function renderSupplementRows(item, blockIndex, itemIndex, readOnly = issueEditorReadOnly()) {
   if (!item.supplements.length) {
     return `<div class="empty-state empty-state--compact">補足行はまだありません。</div>`;
   }
@@ -1008,16 +1107,16 @@ function renderSupplementRows(item, blockIndex, itemIndex) {
           <div class="supplement-toolbar">
             <span class="supplement-index">補足 ${supplementIndex + 1}</span>
             <div class="block-toolbar-actions">
-              <button class="ghost-button" type="button" data-move-supplement="${blockIndex}:${itemIndex}:${supplementIndex}" data-direction="up" ${supplementIndex === 0 ? "disabled" : ""}>上へ</button>
-              <button class="ghost-button" type="button" data-move-supplement="${blockIndex}:${itemIndex}:${supplementIndex}" data-direction="down" ${supplementIndex === item.supplements.length - 1 ? "disabled" : ""}>下へ</button>
-              <button class="ghost-button ghost-button--danger" type="button" data-remove-supplement="${blockIndex}:${itemIndex}:${supplementIndex}">削除</button>
+              <button class="ghost-button" type="button" data-move-supplement="${blockIndex}:${itemIndex}:${supplementIndex}" data-direction="up" ${disabledAttr(readOnly || supplementIndex === 0)}>上へ</button>
+              <button class="ghost-button" type="button" data-move-supplement="${blockIndex}:${itemIndex}:${supplementIndex}" data-direction="down" ${disabledAttr(readOnly || supplementIndex === item.supplements.length - 1)}>下へ</button>
+              <button class="ghost-button ghost-button--danger" type="button" data-remove-supplement="${blockIndex}:${itemIndex}:${supplementIndex}" ${disabledAttr(readOnly)}>削除</button>
             </div>
           </div>
           <div class="supplement-inputs">
-            <select data-item-supplement-field="tone" data-block-index="${blockIndex}" data-item-index="${itemIndex}" data-supplement-index="${supplementIndex}">
+            <select data-item-supplement-field="tone" data-block-index="${blockIndex}" data-item-index="${itemIndex}" data-supplement-index="${supplementIndex}" ${disabledAttr(readOnly)}>
               ${itemSupplementToneOptions(supplement.tone)}
             </select>
-            <textarea data-item-supplement-field="content" data-block-index="${blockIndex}" data-item-index="${itemIndex}" data-supplement-index="${supplementIndex}" placeholder="提出先や問い合わせ先など">${escapeHtml(supplement.content)}</textarea>
+            <textarea data-item-supplement-field="content" data-block-index="${blockIndex}" data-item-index="${itemIndex}" data-supplement-index="${supplementIndex}" placeholder="提出先や問い合わせ先など" ${disabledAttr(readOnly)}>${escapeHtml(supplement.content)}</textarea>
           </div>
         </div>
       `,
@@ -1025,38 +1124,38 @@ function renderSupplementRows(item, blockIndex, itemIndex) {
     .join("");
 }
 
-function renderItemCard(block, blockIndex, item, itemIndex) {
+function renderItemCard(block, blockIndex, item, itemIndex, readOnly = issueEditorReadOnly()) {
   const itemIndexLabel = itemHasVisibleContent(item) ? `${itemMarker(itemIndex)} 項目` : "項目";
   return `
     <section class="item-card">
       <div class="item-toolbar">
         <span class="item-index">${itemIndexLabel}</span>
         <div class="block-toolbar-actions">
-          <button class="ghost-button" type="button" data-move-item="${blockIndex}:${itemIndex}" data-direction="up" ${itemIndex === 0 ? "disabled" : ""}>上へ</button>
-          <button class="ghost-button" type="button" data-move-item="${blockIndex}:${itemIndex}" data-direction="down" ${itemIndex === block.items.length - 1 ? "disabled" : ""}>下へ</button>
-          <button class="ghost-button ghost-button--danger" type="button" data-remove-item="${blockIndex}:${itemIndex}">削除</button>
+          <button class="ghost-button" type="button" data-move-item="${blockIndex}:${itemIndex}" data-direction="up" ${disabledAttr(readOnly || itemIndex === 0)}>上へ</button>
+          <button class="ghost-button" type="button" data-move-item="${blockIndex}:${itemIndex}" data-direction="down" ${disabledAttr(readOnly || itemIndex === block.items.length - 1)}>下へ</button>
+          <button class="ghost-button ghost-button--danger" type="button" data-remove-item="${blockIndex}:${itemIndex}" ${disabledAttr(readOnly)}>削除</button>
         </div>
       </div>
       <div class="form-grid form-grid--block">
         <div class="field field--wide">
           <label>項目見出し</label>
-          <input data-item-field="heading" data-block-index="${blockIndex}" data-item-index="${itemIndex}" value="${escapeHtml(item.heading)}" placeholder="例: 令和7年産 水稲〜">
+          <input data-item-field="heading" data-block-index="${blockIndex}" data-item-index="${itemIndex}" value="${escapeHtml(item.heading)}" placeholder="例: 令和7年産 水稲〜" ${disabledAttr(readOnly)}>
         </div>
         <div class="field field--wide">
           <label>本文</label>
-          <textarea data-item-field="body" data-block-index="${blockIndex}" data-item-index="${itemIndex}" placeholder="記入方法や説明を書きます。">${escapeHtml(item.body)}</textarea>
+          <textarea data-item-field="body" data-block-index="${blockIndex}" data-item-index="${itemIndex}" placeholder="記入方法や説明を書きます。" ${disabledAttr(readOnly)}>${escapeHtml(item.body)}</textarea>
         </div>
         <div class="field">
           <label>対象者</label>
-          <input data-item-field="audience_label" data-block-index="${blockIndex}" data-item-index="${itemIndex}" value="${escapeHtml(item.audience_label)}" placeholder="全員 / 一部 / 希望者">
+          <input data-item-field="audience_label" data-block-index="${blockIndex}" data-item-index="${itemIndex}" value="${escapeHtml(item.audience_label)}" placeholder="全員 / 一部 / 希望者" ${disabledAttr(readOnly)}>
         </div>
         <div class="field">
           <label>期限</label>
-          <input data-item-field="due_date" data-block-index="${blockIndex}" data-item-index="${itemIndex}" type="date" value="${escapeHtml(item.due_date)}">
+          <input data-item-field="due_date" data-block-index="${blockIndex}" data-item-index="${itemIndex}" type="date" value="${escapeHtml(item.due_date)}" ${disabledAttr(readOnly)}>
         </div>
         <div class="field field--wide">
           <label>対象者/期限の並び</label>
-          <select data-item-field="meta_layout" data-block-index="${blockIndex}" data-item-index="${itemIndex}">
+          <select data-item-field="meta_layout" data-block-index="${blockIndex}" data-item-index="${itemIndex}" ${disabledAttr(readOnly)}>
             ${itemMetaLayoutOptions(item.meta_layout)}
           </select>
           <p class="field-hint">補足行は常に別行です。ここでは対象者と期限だけを同じ行にするか決めます。</p>
@@ -1064,15 +1163,15 @@ function renderItemCard(block, blockIndex, item, itemIndex) {
         <div class="field field--wide">
           <div class="field-header">
             <label>補足行</label>
-            <button class="ghost-button" type="button" data-add-supplement="${blockIndex}:${itemIndex}">補足行を追加</button>
+            <button class="ghost-button" type="button" data-add-supplement="${blockIndex}:${itemIndex}" ${disabledAttr(readOnly)}>補足行を追加</button>
           </div>
-          <div class="supplement-stack">${renderSupplementRows(item, blockIndex, itemIndex)}</div>
+          <div class="supplement-stack">${renderSupplementRows(item, blockIndex, itemIndex, readOnly)}</div>
           <p class="field-hint">赤は提出/注意、青は問い合わせ/補足案内。本文の下に入力順で縦積み表示します。</p>
         </div>
       </div>
       <div class="field">
         <label>資料</label>
-        ${renderAttachmentList(item, blockIndex, itemIndex)}
+        ${renderAttachmentList(item, blockIndex, itemIndex, readOnly)}
       </div>
     </section>
   `;
@@ -1155,7 +1254,7 @@ function renderTemplateDocumentPreviewMarkup() {
   });
 }
 
-function renderPaperFontScaleControls() {
+function renderPaperFontScaleControls(disabled = false) {
   const rows = PAPER_FONT_SCALE_ORDER.map((category) => {
     const value = state.paperFontScale[category];
     const atMin = value <= PAPER_FONT_SCALE_LIMITS.min;
@@ -1164,9 +1263,9 @@ function renderPaperFontScaleControls() {
       <div class="font-scale-row">
         <span class="font-scale-label">${escapeHtml(paperFontScaleLabels[category])}</span>
         <div class="font-scale-actions">
-          <button class="ghost-button" type="button" data-font-scale-adjust="${category}:-1" ${atMin ? "disabled" : ""}>-</button>
+          <button class="ghost-button" type="button" data-font-scale-adjust="${category}:-1" ${disabledAttr(disabled || atMin)}>-</button>
           <span class="font-scale-value">${escapeHtml(`${value}%`)}</span>
-          <button class="ghost-button" type="button" data-font-scale-adjust="${category}:1" ${atMax ? "disabled" : ""}>+</button>
+          <button class="ghost-button" type="button" data-font-scale-adjust="${category}:1" ${disabledAttr(disabled || atMax)}>+</button>
         </div>
       </div>
     `;
@@ -1177,9 +1276,9 @@ function renderPaperFontScaleControls() {
       <div class="card-header">
         <div>
           <h2 class="card-title">文字サイズ</h2>
-          <p class="card-copy">紙面そのものの文字倍率です。現在の見た目を 80% 基準として扱い、このブラウザ全体で共有します。</p>
+          <p class="card-copy">${escapeHtml(disabled ? "発行済みの案内では変更できません。下書き側でのみ調整してください。" : "紙面そのものの文字倍率です。現在の見た目を 80% 基準として扱い、このブラウザ全体で共有します。")}</p>
         </div>
-        <button class="ghost-button" type="button" id="reset-paper-font-scale-button">標準に戻す</button>
+        <button class="ghost-button" type="button" id="reset-paper-font-scale-button" ${disabledAttr(disabled)}>標準に戻す</button>
       </div>
       <div class="font-scale-grid">${rows}</div>
     </section>
@@ -1206,10 +1305,13 @@ function renderIssueCards() {
     ? state.issues
         .map((issue) => {
           const editHref = `/issues/${encodeURIComponent(issue.id)}/edit`;
-          const deleteDisabled = issue.status === "published";
+          const deleteDisabled = isIssuePublished(issue);
           const deleteAttributes = deleteDisabled
-            ? ' disabled title="公開済みの案内は削除できません"'
+            ? ' disabled title="発行済みの案内は削除できません"'
             : "";
+          const statusLabel = issueStatusLabel(issue.status);
+          const statusBadgeClass = issueStatusBadgeClass(issue.status);
+          const entryLabel = issuePrimaryLinkLabel(issue);
           return `
             <article class="issue-card">
               <div class="issue-card-head">
@@ -1217,16 +1319,16 @@ function renderIssueCards() {
                   <h2 class="issue-card-title">${escapeHtml(issue.title)}</h2>
                   <div class="issue-card-meta">
                     <span class="badge badge--accent">${escapeHtml(issueTypeLabels[issue.issue_type] || issue.issue_type)}</span>
-                    <span class="badge badge--draft">${escapeHtml(issue.status)}</span>
+                    <span class="badge ${statusBadgeClass}">${escapeHtml(statusLabel)}</span>
                   </div>
                 </div>
                 <span class="issue-card-stat">${escapeHtml(monthLabel(issue.issue_month ? issue.issue_month.slice(0, 7) : ""))}</span>
               </div>
               <p class="issue-card-copy">場所: ${escapeHtml(issue.place || "未設定")} / ブロック数: ${issue.block_count}</p>
               <div class="issue-card-footer">
-                <span class="issue-card-stat">${issue.published_at ? `公開: ${escapeHtml(issue.published_at)}` : "公開前の下書き"}</span>
+                <span class="issue-card-stat">${escapeHtml(issuePublishedStat(issue))}</span>
                 <div class="issue-card-actions">
-                  <a class="issue-link" href="${editHref}">編集へ</a>
+                  <a class="issue-link" href="${editHref}">${entryLabel}</a>
                   <button class="ghost-button" type="button" data-duplicate-issue="${escapeHtml(issue.id)}">複製</button>
                   <button class="ghost-button ghost-button--danger" type="button" data-delete-issue="${escapeHtml(issue.id)}"${deleteAttributes}>削除</button>
                 </div>
@@ -1244,14 +1346,16 @@ function renderIssueThumbnailCards() {
         .map((issue) => {
           const editHref = `/issues/${encodeURIComponent(issue.id)}/edit`;
           const month = monthLabel(issue.issue_month ? issue.issue_month.slice(0, 7) : "");
+          const entryLabel = issuePrimaryLinkLabel(issue);
+          const statusLabel = issueStatusLabel(issue.status);
           return `
             <article class="issue-thumb-tile">
               <div class="issue-thumb-caption">
                 <div class="issue-thumb-copy">
-                  <p class="issue-thumb-kicker">${escapeHtml(month)}</p>
+                  <p class="issue-thumb-kicker">${escapeHtml(`${month} / ${statusLabel}`)}</p>
                   <h3 class="issue-thumb-title">${escapeHtml(issue.title)}</h3>
                 </div>
-                <a class="issue-link issue-thumb-edit" href="${editHref}">編集へ</a>
+                <a class="issue-link issue-thumb-edit" href="${editHref}">${entryLabel}</a>
               </div>
               <a class="issue-thumb-media ${issue.thumbnail_url ? "" : "has-error"}" href="${editHref}" data-issue-thumb-media>
                 ${
@@ -1565,6 +1669,7 @@ function renderEditor() {
   }
 
   const issue = state.issue;
+  const editorReadOnly = issueEditorReadOnly(issue);
   const blockMarkup = state.blocks.length
     ? state.blocks
         .map(
@@ -1573,32 +1678,32 @@ function renderEditor() {
               <div class="block-toolbar">
                 <span class="block-index">${index + 1}. ${escapeHtml(block.heading || blockKindLabels[block.block_kind] || "大項目")}</span>
                 <div class="block-toolbar-actions">
-                  <button class="ghost-button" type="button" data-move-block="${index}" data-direction="up" ${index === 0 ? "disabled" : ""}>上へ</button>
-                  <button class="ghost-button" type="button" data-move-block="${index}" data-direction="down" ${index === state.blocks.length - 1 ? "disabled" : ""}>下へ</button>
-                  <button class="ghost-button ghost-button--danger" type="button" data-remove-block="${index}">削除</button>
+                  <button class="ghost-button" type="button" data-move-block="${index}" data-direction="up" ${disabledAttr(editorReadOnly || index === 0)}>上へ</button>
+                  <button class="ghost-button" type="button" data-move-block="${index}" data-direction="down" ${disabledAttr(editorReadOnly || index === state.blocks.length - 1)}>下へ</button>
+                  <button class="ghost-button ghost-button--danger" type="button" data-remove-block="${index}" ${disabledAttr(editorReadOnly)}>削除</button>
                 </div>
               </div>
               <div class="form-grid form-grid--block">
                 <div class="field">
                   <label>SECTION KIND</label>
-                  <select data-block-field="block_kind" data-block-index="${index}">
+                  <select data-block-field="block_kind" data-block-index="${index}" ${disabledAttr(editorReadOnly)}>
                     ${blockKindOptions(block.block_kind)}
                   </select>
                 </div>
                 <div class="field field--wide">
                   <label>大項目見出し</label>
-                  <input data-block-field="heading" data-block-index="${index}" value="${escapeHtml(block.heading)}" placeholder="例: 9月度提出物 / 配布物">
+                  <input data-block-field="heading" data-block-index="${index}" value="${escapeHtml(block.heading)}" placeholder="例: 9月度提出物 / 配布物" ${disabledAttr(editorReadOnly)}>
                 </div>
               </div>
               <div class="block-items">
                 <div class="item-list-header">
                   <strong>小項目</strong>
-                  <button class="ghost-button" type="button" data-add-item="${index}">項目を追加</button>
+                  <button class="ghost-button" type="button" data-add-item="${index}" ${disabledAttr(editorReadOnly)}>項目を追加</button>
                 </div>
                 <div class="item-stack">
                   ${
                     block.items.length
-                      ? block.items.map((item, itemIndex) => renderItemCard(block, index, item, itemIndex)).join("")
+                      ? block.items.map((item, itemIndex) => renderItemCard(block, index, item, itemIndex, editorReadOnly)).join("")
                       : '<div class="empty-state">まだ小項目がありません。項目を追加してください。</div>'
                   }
                 </div>
@@ -1614,8 +1719,8 @@ function renderEditor() {
       <header class="masthead masthead--editor">
         <div class="brand-block">
           <span class="eyebrow">JOKAI EDITOR</span>
-          <h1 class="page-title">常会案内を編集する</h1>
-          <p class="page-lead">右側の A4 正本プレビューは、実際に生成した案内PDFそのものです。</p>
+          <h1 class="page-title">${escapeHtml(editorReadOnly ? "常会案内を閲覧する" : "常会案内を編集する")}</h1>
+          <p class="page-lead">${escapeHtml(editorReadOnly ? "この号は発行済みです。内容確認と印刷はできますが、修正は複製した新しい下書きで行います。" : "右側の A4 正本プレビューは、実際に生成した案内PDFそのものです。")}</p>
         </div>
         <aside class="status-panel status-panel--editor">
           <div class="status-grid status-grid--editor">
@@ -1625,7 +1730,7 @@ function renderEditor() {
             </div>
             <div class="status-kv">
               <span class="status-label">State</span>
-              <span class="status-value" id="save-state-text">${state.saving ? "保存中…" : state.dirty ? "未保存の変更あり" : "保存済み"}</span>
+              <span class="status-value" id="save-state-text">${escapeHtml(editorSaveStateText())}</span>
             </div>
             <div class="status-kv">
               <span class="status-label">DB</span>
@@ -1639,17 +1744,26 @@ function renderEditor() {
         <div class="editor-actions-group">
           <a class="ghost-link" href="/issues">一覧へ戻る</a>
           <span class="badge badge--accent">${escapeHtml(issueTypeLabels[issue.issue_type] || issue.issue_type)}</span>
-          <span class="badge badge--draft">${escapeHtml(issue.status)}</span>
+          <span class="badge ${issueStatusBadgeClass(issue.status)}">${escapeHtml(issueStatusLabel(issue.status))}</span>
+          <span class="issue-card-stat">${escapeHtml(issuePublishedStat(issue))}</span>
         </div>
         <div class="editor-actions-group editor-actions-group--primary">
           <a class="ghost-link" href="/issues/${escapeHtml(issue.id)}/print" target="_blank" rel="noreferrer">印刷画面</a>
           <button class="ghost-button" type="button" id="reload-issue-button">再読込</button>
-          <button class="primary-button" type="button" id="save-issue-button">保存する</button>
+          ${
+            editorReadOnly
+              ? '<button class="primary-button" type="button" id="duplicate-issue-button">複製して編集</button>'
+              : `
+                  <button class="ghost-button" type="button" id="publish-issue-button" ${disabledAttr(state.saving || state.publishing)}>発行する</button>
+                  <button class="primary-button" type="button" id="save-issue-button" ${disabledAttr(state.saving || state.publishing)}>保存する</button>
+                `
+          }
         </div>
       </div>
 
       ${state.error ? `<div class="flash flash--error">${escapeHtml(state.error)}</div>` : ""}
       ${state.notice ? `<div class="flash flash--info">${escapeHtml(state.notice)}</div>` : ""}
+      ${renderIssueReadonlyBanner(issue)}
 
       <section class="workspace editor-layout">
         <div class="editor-column">
@@ -1660,46 +1774,46 @@ function renderEditor() {
               <div class="issue-meta-row">
                 <div class="field">
                   <label>ISSUE TYPE</label>
-                  <select data-issue-field="issue_type">${issueTypeOptions(issue.issue_type)}</select>
+                  <select data-issue-field="issue_type" ${disabledAttr(editorReadOnly)}>${issueTypeOptions(issue.issue_type)}</select>
                 </div>
                 <div class="field">
                   <label>対象月</label>
-                  <input data-issue-field="issue_month" type="month" value="${escapeHtml(issue.issue_month)}">
+                  <input data-issue-field="issue_month" type="month" value="${escapeHtml(issue.issue_month)}" ${disabledAttr(editorReadOnly)}>
                 </div>
                 <div class="field">
                   <label>開催日</label>
-                  <input data-issue-field="meeting_date" type="date" value="${escapeHtml(issue.meeting_date)}">
+                  <input data-issue-field="meeting_date" type="date" value="${escapeHtml(issue.meeting_date)}" ${disabledAttr(editorReadOnly)}>
                 </div>
                 <div class="field">
                   <label>開始時刻</label>
-                  <input data-issue-field="meeting_time" type="time" value="${escapeHtml(issue.meeting_time)}">
+                  <input data-issue-field="meeting_time" type="time" value="${escapeHtml(issue.meeting_time)}" ${disabledAttr(editorReadOnly)}>
                 </div>
               </div>
               <div class="field field--wide">
                 <label>タイトル</label>
-                <input data-issue-field="title" value="${escapeHtml(issue.title)}" placeholder="例: 平古場生産組合 常会の案内">
+                <input data-issue-field="title" value="${escapeHtml(issue.title)}" placeholder="例: 平古場生産組合 常会の案内" ${disabledAttr(editorReadOnly)}>
               </div>
               <div class="field field--wide">
                 <label>議題見出し</label>
-                <input data-issue-field="agenda_label" value="${escapeHtml(issue.agenda_label)}" placeholder="例: 常会事項 / 総会事項">
+                <input data-issue-field="agenda_label" value="${escapeHtml(issue.agenda_label)}" placeholder="例: 常会事項 / 総会事項" ${disabledAttr(editorReadOnly)}>
               </div>
               <div class="field field--wide">
                 <label>場所</label>
-                <input data-issue-field="place" value="${escapeHtml(issue.place)}" placeholder="例: 平古場自治公民館">
+                <input data-issue-field="place" value="${escapeHtml(issue.place)}" placeholder="例: 平古場自治公民館" ${disabledAttr(editorReadOnly)}>
               </div>
               <div class="field field--wide">
                 <label>上部注記</label>
-                <textarea data-issue-field="header_note" placeholder="田祈祷、忘年会、開始時刻の訂正など">${escapeHtml(issue.header_note)}</textarea>
+                <textarea data-issue-field="header_note" placeholder="田祈祷、忘年会、開始時刻の訂正など" ${disabledAttr(editorReadOnly)}>${escapeHtml(issue.header_note)}</textarea>
               </div>
               <div class="field field--wide">
                 <label>最終ページ左下メモ</label>
-                <textarea data-issue-field="footer_note" placeholder="★提出書類は、常会当日か10月25日(土)までに、組合長に提出して下さい">${escapeHtml(issue.footer_note)}</textarea>
+                <textarea data-issue-field="footer_note" placeholder="★提出書類は、常会当日か10月25日(土)までに、組合長に提出して下さい" ${disabledAttr(editorReadOnly)}>${escapeHtml(issue.footer_note)}</textarea>
                 <p class="field-hint">最終ページだけに表示されます。右下の連絡先「平古場生産組合 / 組合長 古川 豊 / ☎090-7581-7819」は毎回自動で入ります。</p>
               </div>
             </div>
           </section>
 
-          ${renderPaperFontScaleControls()}
+          ${renderPaperFontScaleControls(editorReadOnly)}
 
           <section class="card">
             <div class="card-header">
@@ -1708,10 +1822,10 @@ function renderEditor() {
                 <p class="card-copy">大項目の下に複数の小項目を持たせ、各小項目ごとに右脇サムネを付けます。</p>
               </div>
               <div class="add-row">
-                <button class="ghost-button" type="button" data-add-block="agenda">議題</button>
-                <button class="ghost-button" type="button" data-add-block="submission">提出物</button>
-                <button class="ghost-button" type="button" data-add-block="distribution">配布物</button>
-                <button class="ghost-button" type="button" data-add-block="info">案内事項</button>
+                <button class="ghost-button" type="button" data-add-block="agenda" ${disabledAttr(editorReadOnly)}>議題</button>
+                <button class="ghost-button" type="button" data-add-block="submission" ${disabledAttr(editorReadOnly)}>提出物</button>
+                <button class="ghost-button" type="button" data-add-block="distribution" ${disabledAttr(editorReadOnly)}>配布物</button>
+                <button class="ghost-button" type="button" data-add-block="info" ${disabledAttr(editorReadOnly)}>案内事項</button>
               </div>
             </div>
             <div class="block-stack">${blockMarkup}</div>
@@ -2306,7 +2420,7 @@ function updateSaveStateText() {
   if (!node) {
     return;
   }
-  node.textContent = state.saving ? "保存中…" : state.dirty ? "未保存の変更あり" : "保存済み";
+  node.textContent = editorSaveStateText();
 }
 
 function updateTemplateDocumentSummaryDom() {
@@ -2341,6 +2455,9 @@ function updateTemplateDocumentSummaryDom() {
 }
 
 function markDirty() {
+  if (boot.view === "edit" && isIssuePublished()) {
+    return;
+  }
   state.dirty = true;
   state.notice = "";
   updateSaveStateText();
@@ -2377,8 +2494,30 @@ function bindEditEvents() {
     await loadEditor();
   });
 
+  document.querySelector("#duplicate-issue-button")?.addEventListener("click", async () => {
+    if (!state.issue?.id) {
+      return;
+    }
+    await duplicateIssue(state.issue.id, { renderCurrentView: true });
+  });
+
+  document.querySelectorAll("[data-preview-attachment]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedAttachmentId = button.getAttribute("data-preview-attachment") || "";
+      renderEditor();
+    });
+  });
+
+  if (issueEditorReadOnly()) {
+    return;
+  }
+
   document.querySelector("#save-issue-button")?.addEventListener("click", async () => {
     await saveEditor();
+  });
+
+  document.querySelector("#publish-issue-button")?.addEventListener("click", async () => {
+    await publishIssueFromEditor();
   });
 
   document.querySelector("#reset-paper-font-scale-button")?.addEventListener("click", () => {
@@ -2578,13 +2717,6 @@ function bindEditEvents() {
     });
   });
 
-  document.querySelectorAll("[data-preview-attachment]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.selectedAttachmentId = button.getAttribute("data-preview-attachment") || "";
-      renderEditor();
-    });
-  });
-
   document.querySelectorAll("[data-delete-attachment]").forEach((button) => {
     button.addEventListener("click", async () => {
       const attachmentId = button.getAttribute("data-delete-attachment");
@@ -2606,6 +2738,10 @@ function bindEditEvents() {
         state.notice = "資料を削除しました。";
         ensureSelectedAttachment();
       } catch (error) {
+        if (await syncIssueAfterReadonlyConflict(error)) {
+          renderEditor();
+          return;
+        }
         state.error = error.message;
       }
       renderEditor();
@@ -2780,10 +2916,14 @@ async function createTemplateDocument(documentFamily, templateKey) {
   }
 }
 
-async function duplicateIssue(issueId) {
+async function duplicateIssue(issueId, { renderCurrentView = false } = {}) {
   state.error = "";
   state.notice = "";
-  renderIndex();
+  if (renderCurrentView) {
+    renderEditor();
+  } else {
+    renderIndex();
+  }
   try {
     const response = await api(`/api/issues/${encodeURIComponent(issueId)}/duplicate`, {
       method: "POST",
@@ -2791,7 +2931,11 @@ async function duplicateIssue(issueId) {
     window.location.href = `/issues/${encodeURIComponent(response.id)}/edit`;
   } catch (error) {
     state.error = error.message;
-    renderIndex();
+    if (renderCurrentView) {
+      renderEditor();
+    } else {
+      renderIndex();
+    }
   }
 }
 
@@ -2876,6 +3020,7 @@ async function loadEditor() {
   state.loading = true;
   state.error = "";
   state.notice = "";
+  state.publishing = false;
   clearTemplatePreviewWarning();
   renderLoading("編集画面を読込中です", "対象の号と block 群を取得しています。");
   try {
@@ -2952,7 +3097,7 @@ async function loadTemplateDocumentPrint() {
 }
 
 async function saveEditor() {
-  if (!boot.issueId || state.saving) {
+  if (!boot.issueId || state.saving || state.publishing) {
     return false;
   }
   state.saving = true;
@@ -2971,10 +3116,55 @@ async function saveEditor() {
     state.notice = "保存しました。";
     return true;
   } catch (error) {
+    if (await syncIssueAfterReadonlyConflict(error)) {
+      return false;
+    }
     state.error = error.message;
     return false;
   } finally {
     state.saving = false;
+    renderEditor();
+  }
+}
+
+async function publishIssueFromEditor() {
+  if (!boot.issueId || state.saving || state.publishing || issueEditorReadOnly()) {
+    return false;
+  }
+  if (!window.confirm("この案内を発行しますか？発行後はこの画面から直接編集できず、修正は複製して新しい下書きで行います。")) {
+    return false;
+  }
+
+  state.publishing = true;
+  state.error = "";
+  state.notice = "";
+  renderEditor();
+
+  try {
+    if (state.dirty) {
+      const saved = await saveEditor();
+      if (!saved) {
+        return false;
+      }
+    }
+
+    const documentPayload = await api(`/api/issues/${boot.issueId}/publish`, {
+      method: "POST",
+    });
+    state.issue = normalizeIssue(documentPayload.issue);
+    state.blocks = documentPayload.blocks.map(normalizeBlock);
+    ensureSelectedAttachment();
+    state.dirty = false;
+    state.notice = "案内を発行しました。以後の修正は複製して新しい下書きで行ってください。";
+    return true;
+  } catch (error) {
+    if (await syncIssueAfterReadonlyConflict(error)) {
+      return false;
+    }
+    state.error = error.message;
+    return false;
+  } finally {
+    state.publishing = false;
     renderEditor();
   }
 }
@@ -3042,7 +3232,7 @@ async function saveTemplateDocumentEditor({
 }
 
 async function openPrintPageFromEditor() {
-  if ((boot.view !== "edit" && boot.view !== "template-edit") || printShortcutPending) {
+  if ((boot.view !== "edit" && boot.view !== "template-edit") || printShortcutPending || state.publishing) {
     return;
   }
   if (!state.issue?.id && !boot.issueId && !state.templateDocument?.id && !boot.templateDocumentId) {
@@ -3085,7 +3275,7 @@ window.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("paste", (event) => {
-  if (boot.view !== "edit") {
+  if (boot.view !== "edit" || isIssuePublished()) {
     return;
   }
   const itemId =

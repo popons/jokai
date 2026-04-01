@@ -516,6 +516,12 @@ button {
   color: var(--muted);
 }
 
+.badge--published {
+  color: #2f6a4b;
+  border-color: rgba(52, 115, 82, 0.24);
+  background: rgba(52, 115, 82, 0.12);
+}
+
 .ghost-link,
 .issue-link,
 .ghost-button,
@@ -551,6 +557,12 @@ button {
   background: linear-gradient(180deg, #6f8ff5 0%, #4f73e3 100%);
   border-color: rgba(68, 99, 190, 0.45);
   color: #fff;
+}
+
+.primary-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+  transform: none;
 }
 
 .flash {
@@ -898,6 +910,13 @@ button {
 
 .upload-dropzone input {
   display: none;
+}
+
+.upload-dropzone.is-disabled {
+  opacity: 0.65;
+  border-color: rgba(129, 146, 177, 0.24);
+  background: rgba(248, 251, 255, 0.92);
+  cursor: default;
 }
 
 .attachment-paste-target {
