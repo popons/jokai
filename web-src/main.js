@@ -1,6 +1,7 @@
 import "./app.css";
 import {
   ITEM_THUMBNAIL_SCALE_DEFAULT_PERCENT,
+  NOTICE_RENDER_VERSION,
   ITEM_THUMBNAIL_SCALE_LIMITS,
   PAPER_FONT_SCALE_DEFAULTS,
   PAPER_FONT_SCALE_LIMITS,
@@ -2276,7 +2277,7 @@ function updatePreviewDom() {
   updateTemplatePreviewWarningDom();
 }
 
-async function rasterizePreview(bytes, { useIssuePreviewCache = true } = {}) {
+async function rasterizePreview(bytes, { useIssuePreviewCache = true, expectedPageCount = 0 } = {}) {
   const formData = new FormData();
   formData.append("file", new Blob([bytes], { type: "application/pdf" }), "preview.pdf");
   if (!state.dirty && state.issue?.id) {
@@ -2286,6 +2287,9 @@ async function rasterizePreview(bytes, { useIssuePreviewCache = true } = {}) {
       formData.append("cache_bypass", "1");
     }
   }
+  if (Number.isInteger(expectedPageCount) && expectedPageCount > 0) {
+    formData.append("expected_page_count", String(expectedPageCount));
+  }
   return api("/api/preview-renders", {
     method: "POST",
     body: formData,
@@ -2294,9 +2298,10 @@ async function rasterizePreview(bytes, { useIssuePreviewCache = true } = {}) {
 
 function currentIssuePreviewFontScaleCacheKey(fontScale = state.paperFontScale) {
   const normalized = normalizePaperFontScale(fontScale);
-  return PAPER_FONT_SCALE_ORDER
+  const fontScaleKey = PAPER_FONT_SCALE_ORDER
     .map((category) => `${category}:${normalized[category]}`)
     .join("|");
+  return `${NOTICE_RENDER_VERSION}|${fontScaleKey}`;
 }
 
 async function fetchCachedIssuePreviewImages(issueId = state.issue?.id || boot.issueId) {
@@ -2435,32 +2440,34 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
       }
       return;
     } else {
-      ({ bytes } = await buildNoticePdfDocument(state.issue, state.blocks, state.paperFontScale));
-    }
-    if (generation !== state.previewGeneration) {
-      return;
-    }
+      let templatePageCount = 0;
+      ({ bytes, templatePageCount } = await buildNoticePdfDocument(state.issue, state.blocks, state.paperFontScale));
+      if (generation !== state.previewGeneration) {
+        return;
+      }
+      clearTemplatePreviewWarning();
+      state.previewBytes = bytes;
+      const preview = await rasterizePreview(bytes, {
+        useIssuePreviewCache: reason !== "manual-refresh",
+        expectedPageCount: templatePageCount,
+      });
+      if (generation !== state.previewGeneration) {
+        return;
+      }
+      state.previewImages = Array.isArray(preview.images) ? preview.images : [];
+      state.previewPending = false;
+      state.previewReadyAt = new Date().toLocaleTimeString("ja-JP", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+      clearPreviewErrorMessage();
+      updatePreviewDom();
 
-    clearTemplatePreviewWarning();
-    state.previewBytes = bytes;
-    const preview = await rasterizePreview(bytes, {
-      useIssuePreviewCache: reason !== "manual-refresh",
-    });
-    if (generation !== state.previewGeneration) {
+      if (forceDownload) {
+        downloadBytes(bytes, currentPdfFileName());
+      }
       return;
-    }
-    state.previewImages = Array.isArray(preview.images) ? preview.images : [];
-    state.previewPending = false;
-    state.previewReadyAt = new Date().toLocaleTimeString("ja-JP", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-    clearPreviewErrorMessage();
-    updatePreviewDom();
-
-    if (forceDownload) {
-      downloadBytes(bytes, currentPdfFileName());
     }
   } catch (error) {
     if (generation !== state.previewGeneration) {

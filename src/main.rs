@@ -49,9 +49,9 @@ const FRONTEND_APP_JS: &str = "app.js";
 const FRONTEND_FONT_BODY: &str = "body.ttf";
 const FRONTEND_FONT_BODY_BOLD: &str = "body-bold.ttf";
 const FRONTEND_FONT_TITLE: &str = "title.ttf";
-const CURRENT_LAYOUT_VERSION: &str = "notice-pdf-layout-v2";
+const CURRENT_LAYOUT_VERSION: &str = "notice-pdf-layout-v3";
 const CURRENT_FONT_VERSION: &str = "noto-sans-jp-static-v2";
-const CURRENT_RENDERER_VERSION: &str = "pdfme-raster-v2";
+const CURRENT_RENDERER_VERSION: &str = "pdfme-raster-v3";
 const FAMILY_TAB_ISSUES: &str = "issues";
 const TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI: &str = "shogai_kyosai";
 const TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL: &str = "join_renewal";
@@ -415,6 +415,13 @@ impl IssuePreviewImageCache {
   fn touch(&mut self, key: &str) {
     self.order.retain(|existing| existing != key);
     self.order.push_back(key.to_string());
+  }
+
+  fn remove(&mut self, key: &str) {
+    self.order.retain(|existing| existing != key);
+    if let Some(entry) = self.entries.remove(key) {
+      self.total_bytes = self.total_bytes.saturating_sub(entry.total_bytes);
+    }
   }
 }
 
@@ -1678,20 +1685,22 @@ async fn upsert_issue_thumbnail_cache(
   client: &Client,
   issue_id: &str,
   source_version: i64,
+  render_version: &str,
   mime_type: &str,
   bytes: &[u8],
 ) -> std::result::Result<(), (StatusCode, String)> {
   client
     .execute(
-      "insert into issue_thumbnail_caches (issue_id, source_version, mime_type, content)
-       values ((select id from issues where id::text = $1), $2, $3, $4)
+      "insert into issue_thumbnail_caches (issue_id, source_version, render_version, mime_type, content)
+       values ((select id from issues where id::text = $1), $2, $3, $4, $5)
        on conflict (issue_id)
        do update set
          source_version = excluded.source_version,
+         render_version = excluded.render_version,
          mime_type = excluded.mime_type,
          content = excluded.content,
          updated_at = now()",
-      &[&issue_id, &source_version, &mime_type, &bytes],
+      &[&issue_id, &source_version, &render_version, &mime_type, &bytes],
     )
     .await
     .map_err(|err| api_internal(err.to_string()))?;
@@ -1772,7 +1781,27 @@ async fn fetch_issue_source_version(
 }
 
 fn issue_preview_cache_key(issue_id: &str, source_version: i64, font_scale_key: &str) -> String {
-  format!("{issue_id}:{source_version}:{font_scale_key}")
+  format!(
+    "{issue_id}:{source_version}:{}:{font_scale_key}",
+    current_notice_render_version()
+  )
+}
+
+fn current_notice_render_version() -> String {
+  format!("{CURRENT_LAYOUT_VERSION}|{CURRENT_FONT_VERSION}|{CURRENT_RENDERER_VERSION}")
+}
+
+fn issue_list_thumbnail_version_token(source_version: i64) -> String {
+  format!(
+    "{source_version}-{CURRENT_LAYOUT_VERSION}-{CURRENT_FONT_VERSION}-{CURRENT_RENDERER_VERSION}"
+  )
+}
+
+fn preview_page_count_matches(
+  expected_page_count: Option<usize>,
+  actual_page_count: usize,
+) -> bool {
+  expected_page_count.is_none_or(|expected| expected == actual_page_count)
 }
 
 fn encode_preview_image_data_urls(images: &[Vec<u8>]) -> Vec<String> {
@@ -1835,6 +1864,31 @@ async fn cache_issue_preview_images(
   Ok(())
 }
 
+async fn remove_cached_issue_preview_images(
+  state: &AppState,
+  issue_id: &str,
+  font_scale_key: &str,
+) -> std::result::Result<(), (StatusCode, String)> {
+  let trimmed_font_scale_key = font_scale_key.trim();
+  if trimmed_font_scale_key.is_empty() {
+    return Ok(());
+  }
+
+  let Some(source_version) = fetch_issue_source_version(&state.client, issue_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+  else {
+    return Ok(());
+  };
+  let cache_key = issue_preview_cache_key(issue_id, source_version, trimmed_font_scale_key);
+  let mut cache = state
+    .issue_preview_image_cache
+    .lock()
+    .map_err(|err| api_internal(format!("issue preview cache lock poisoned: {err}")))?;
+  cache.remove(&cache_key);
+  Ok(())
+}
+
 async fn fetch_issue_status(
   client: &Client,
   issue_id: &str,
@@ -1886,11 +1940,11 @@ async fn bump_issue_source_version(
 async fn fetch_issue_thumbnail_cache(
   state: &AppState,
   issue_id: &str,
-) -> std::result::Result<Option<(i64, String, Vec<u8>)>, (StatusCode, String)> {
+) -> std::result::Result<Option<(i64, String, String, Vec<u8>)>, (StatusCode, String)> {
   let row = state
     .client
     .query_opt(
-      "select source_version, mime_type, content
+      "select source_version, render_version, mime_type, content
        from issue_thumbnail_caches
        where issue_id = (select id from issues where id::text = $1)",
       &[&issue_id],
@@ -1902,7 +1956,8 @@ async fn fetch_issue_thumbnail_cache(
     (
       row.get::<_, i64>(0),
       row.get::<_, String>(1),
-      row.get::<_, Vec<u8>>(2),
+      row.get::<_, String>(2),
+      row.get::<_, Vec<u8>>(3),
     )
   }))
 }
@@ -2420,11 +2475,15 @@ async fn fetch_issue_list_thumbnail_bytes(
     .await
     .map_err(|err| api_internal(err.to_string()))?
     .ok_or_else(|| api_not_found("issue not found"))?;
+  let render_version = current_notice_render_version();
 
-  if let Some((cached_source_version, mime_type, bytes)) =
+  if let Some((cached_source_version, cached_render_version, mime_type, bytes)) =
     fetch_issue_thumbnail_cache(state, issue_id).await?
   {
-    if cached_source_version == source_version && !bytes.is_empty() {
+    if cached_source_version == source_version
+      && cached_render_version == render_version
+      && !bytes.is_empty()
+    {
       return Ok((mime_type, bytes));
     }
   }
@@ -2435,6 +2494,7 @@ async fn fetch_issue_list_thumbnail_bytes(
     &state.client,
     issue_id,
     source_version,
+    &render_version,
     "image/png",
     &png_bytes,
   )
@@ -3238,6 +3298,7 @@ async fn api_preview_rasterize(
   let mut cache_issue_id = String::new();
   let mut cache_font_scale_key = String::new();
   let mut cache_bypass = false;
+  let mut expected_page_count = None;
   while let Some(field) = multipart
     .next_field()
     .await
@@ -3270,6 +3331,20 @@ async fn api_preview_rasterize(
           .map_err(|err| api_internal(err.to_string()))?
           == "1";
       }
+      Some("expected_page_count") => {
+        let raw = field
+          .text()
+          .await
+          .map_err(|err| api_internal(err.to_string()))?;
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+          expected_page_count = Some(
+            trimmed
+              .parse::<usize>()
+              .map_err(|err| api_bad_request(format!("invalid expected_page_count: {err}")))?,
+          );
+        }
+      }
       _ => {}
     }
   }
@@ -3278,13 +3353,23 @@ async fn api_preview_rasterize(
     && let Some(images) =
       fetch_cached_issue_preview_images(&state, &cache_issue_id, &cache_font_scale_key).await?
   {
-    return Ok(Json(PreviewRenderResponse { images }));
+    if preview_page_count_matches(expected_page_count, images.len()) {
+      return Ok(Json(PreviewRenderResponse { images }));
+    }
+    remove_cached_issue_preview_images(&state, &cache_issue_id, &cache_font_scale_key).await?;
   }
 
   let Some(pdf_bytes) = pdf_bytes else {
     return Err(api_bad_request("preview PDF file is missing"));
   };
   let png_images = rasterize_pdf_bytes_to_png_bytes(&state, pdf_bytes.as_ref())?;
+  if !preview_page_count_matches(expected_page_count, png_images.len()) {
+    return Err(api_internal(format!(
+      "preview page count mismatch: expected {}, got {}",
+      expected_page_count.unwrap_or_default(),
+      png_images.len()
+    )));
+  }
   cache_issue_preview_images(&state, &cache_issue_id, &cache_font_scale_key, &png_images).await?;
   Ok(Json(PreviewRenderResponse {
     images: encode_preview_image_data_urls(&png_images),
@@ -3384,8 +3469,9 @@ async fn api_issues(State(state): State<Arc<AppState>>) -> ApiResult<Vec<IssueLi
       let source_version = row.get::<_, i64>(8);
       IssueListItem {
         thumbnail_url: format!(
-          "/api/issues/{}/list-thumbnail?v={source_version}",
-          sanitize_filename(&id)
+          "/api/issues/{}/list-thumbnail?v={}",
+          sanitize_filename(&id),
+          issue_list_thumbnail_version_token(source_version)
         ),
         id,
         issue_type: row.get::<_, String>(1),

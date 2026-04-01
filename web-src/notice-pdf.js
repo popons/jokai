@@ -11,6 +11,7 @@ const TITLE_FONT_FAMILY = '"Yu Gothic", "Hiragino Sans", sans-serif';
 const BODY_FONT_NAME = "JokaiBody";
 const BODY_BOLD_FONT_NAME = "JokaiBodyBold";
 const TITLE_FONT_NAME = "JokaiTitle";
+export const NOTICE_RENDER_VERSION = "notice-pdf-layout-v3|noto-sans-jp-static-v2|pdfme-raster-v3";
 const DEFAULT_AGENDA_LABEL = "常会事項";
 const ITEM_META_LAYOUT_STACKED = "stacked";
 const ITEM_META_LAYOUT_SAME_LINE = "same_line";
@@ -36,6 +37,7 @@ const FOOTER_NOTE_FONT_SIZE = 9;
 const FOOTER_NOTE_LINE_HEIGHT = 1.22;
 const FOOTER_CONTACT_FONT_SIZE = 8.6;
 const FOOTER_CONTACT_LINE_HEIGHT = 1.22;
+const CONTINUATION_MARKER_BOTTOM_GAP_MM = 0.6;
 export const ITEM_THUMBNAIL_SCALE_DEFAULT_PERCENT = 100;
 export const ITEM_THUMBNAIL_SCALE_LIMITS = Object.freeze({
   min: 80,
@@ -501,6 +503,14 @@ function footerNoteWidthMm() {
   return mmPrecise(FOOTER_RIGHT_X - FOOTER_NOTE_GAP_BEFORE_CONTACT_MM - FOOTER_LEFT_X);
 }
 
+function bottomPaddingLimitMm() {
+  return mmPrecise(A4_HEIGHT_MM - BLANK_PAGE_PADDING_BOTTOM_MM);
+}
+
+function bottomSafeY(height, gap = 0) {
+  return mmPrecise(Math.max(BLANK_PAGE_PADDING_TOP_MM, bottomPaddingLimitMm() - height - gap));
+}
+
 function clampSchemaY(value) {
   return Math.max(BLANK_PAGE_PADDING_TOP_MM, mmPrecise(value));
 }
@@ -716,21 +726,20 @@ function addContinuationMarker(page, typography) {
     typography.body.lineHeight.continuation,
     1,
   );
-  pushTextSchema(
-    page,
-    {
+  const markerHeight = continuationHeight + 0.4;
+  page.push(
+    createTextSchema({
       name: `continued-${page.length}`,
       x: 16,
-      y: A4_HEIGHT_MM - 12,
+      y: bottomSafeY(markerHeight, CONTINUATION_MARKER_BOTTOM_GAP_MM),
       width: 40,
-      height: continuationHeight + 0.4,
+      height: markerHeight,
       content: "次頁へ続く",
       fontSize: typography.body.continuation,
       fontName: BODY_BOLD_FONT_NAME,
       fontColor: COLOR_RED,
       lineHeight: typography.body.lineHeight.continuation,
-    },
-    { halo: true },
+    }),
   );
 }
 
@@ -1282,6 +1291,7 @@ function buildPdfMonthPrefix(issue) {
 }
 
 function validateTemplate(template) {
+  const maxBottom = bottomPaddingLimitMm();
   template.schemas.forEach((page, pageIndex) => {
     page.forEach((schema, schemaIndex) => {
       const values = {
@@ -1295,6 +1305,12 @@ function validateTemplate(template) {
         if (schema.position.y < BLANK_PAGE_PADDING_TOP_MM - 0.01) {
           throw new Error(
             `invalid schema ${schema?.name || `(page ${pageIndex + 1} schema ${schemaIndex + 1})`} field y: ${String(schema.position.y)} < top padding ${BLANK_PAGE_PADDING_TOP_MM}`,
+          );
+        }
+        const bottom = Number(schema.position.y) + Number(schema.height);
+        if (bottom > maxBottom + 0.01) {
+          throw new Error(
+            `invalid schema ${schema?.name || `(page ${pageIndex + 1} schema ${schemaIndex + 1})`} bottom: ${String(bottom)} > bottom padding limit ${maxBottom}`,
           );
         }
         return;
@@ -1341,6 +1357,6 @@ export async function buildNoticePdfDocument(issue, blocks, fontScale = PAPER_FO
 
   return {
     bytes,
-    template,
+    templatePageCount: template.schemas.length,
   };
 }
