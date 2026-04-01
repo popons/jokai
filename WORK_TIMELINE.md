@@ -405,3 +405,29 @@
 - 2026-03-19 12:35:06 +0900 [修正] `web-src/notice-pdf.js` の footer note / contact だけ halo を外した。本文側 halo は維持しつつ、同ファイルから直接生成した PDF が 1 ページ化することを `pdfinfo` で確認。
 - 2026-03-19 12:35:06 +0900 [codified-context] `codified-context-maintenance` を debug-followup で実施。`AGENTS.md` と `context/repo-map.md` に footer halo が `pdfme` の白紙ページ bug を踏む知見を反映する方針を確定。
 - 2026-03-19 12:43:59 +0900 [リリース] user-facing な正本版は `Cargo.toml` / `CARGO_PKG_VERSION` と判断し、`0.1.0` から `0.2.0` へ minor bump。`ChangeLog.md` / `CHANGELOG.md` は repo 内に存在しないため新規作成は見送った。
+- 2026-03-31 18:47:57 +0900 [調査] `常会事項` は `web-src/notice-pdf.js` の1ページ目大見出し、`agenda` block の既定ラベル、右脇サムネの赤ラベルで固定されていると確認。issue 単位の保存項目に切り出さないと総会案内へ自然に転用できない。
+- 2026-03-31 18:47:57 +0900 [調査] `git status --short` は空で作業ツリーはクリーン。`src/main.rs` の issue read/save/duplicate と `web-src/main.js` の issue normalize/save に新規 `agenda_label` を通すのが最小変更だと判断。
+- 2026-03-31 18:48:52 +0900 [実装] `db/008_issue_agenda_label.sql` を追加し、`issues.agenda_label` を `text not null default '常会事項'` で導入した。既存データと新規作成の既定値互換を DB 側で確保。
+- 2026-03-31 18:48:52 +0900 [実装] `src/main.rs` の issue read/save/duplicate に `agenda_label` を追加し、保存時は空文字でも `常会事項` へ正規化するようにした。
+- 2026-03-31 18:50:09 +0900 [実装] `web-src/main.js` に issue 単位の `agenda_label` 編集欄と保存 payload を追加した。既存 issue 取得時に値が無くても `常会事項` へフォールバックする。
+- 2026-03-31 18:50:09 +0900 [実装] `web-src/notice-pdf.js` で1ページ目大見出し、`agenda` block の既定見出し、右脇サムネの赤ラベルが `issue.agenda_label` を使うよう変更し、`no_meeting` の `案内事項` は据え置いた。
+- 2026-03-31 18:50:09 +0900 [codified-context] `context/repo-map.md` を更新し、`agenda_label` が issue 側の保存責務であり、紙面の議題系ラベルへ流れる current truth を追記した。
+- 2026-03-31 18:52:33 +0900 [ビルド] `npm run build` と `cargo fmt` を実行。`git diff --check` は clean、`build-error.txt` `test-error.txt` `clippy-error.txt` は失敗なし、`build-error-win.txt` は未作成だった。
+- 2026-03-31 18:52:33 +0900 [検証] `http://localhost:12040/issues/c1141fa4-9dbe-48b1-8957-2b1bfcddaccc/edit` を確認し、新しい `議題見出し` 入力欄が表示されることを確認。`curl /api/issues/...` では保存済み値が `agenda_label:\"常会事項\"` と返る一方、別ブラウザ文脈では未保存の live 編集が見えたため、ユーザー作業へ干渉しないよう保存操作は実施しなかった。
+- 2026-04-01 11:23:47 +0900 [調査] `http://localhost:12040/` の既存案内一覧は現状テキストカードのみで、`サムネ表示` / `詳細表示` 切替も issue 用サムネ API も未実装と確認。
+- 2026-04-01 11:23:47 +0900 [調査] issue 一覧サムネは `render_print_page_pdf_file()` の headless Chromium 経路と `pdftoppm` を組み合わせれば供給可能で、`source_version` を cache invalidation の正本に使う方針を確定。
+- 2026-04-01 11:27:00 +0900 [実装] `db/009_issue_thumbnail_caches.sql` と `src/main.rs` に issue 一覧用 thumbnail cache / `GET /api/issues/{id}/list-thumbnail` / `GET /api/issues` の `thumbnail_url` 追加を実装した。1ページ目 PNG は print shell 由来 PDF を `pdftoppm` で単ページ化して生成する。
+- 2026-04-01 11:27:00 +0900 [実装] `web-src/main.js` と `web-src/app.css` に `サムネ表示` / `詳細表示` toggle、`localStorage` 保存、A4 サムネ gallery、失敗時 placeholder を追加した。`詳細表示` は既存の `複製` / `削除` を維持し、`サムネ表示` は `編集へ` 優先に整理。
+- 2026-04-01 11:27:00 +0900 [ビルド] `npm run build` と `cargo fmt` を実行し、保存後 1 秒待機して `build-error.txt` `test-error.txt` `clippy-error.txt` を確認。失敗なし、`build-error-win.txt` は未作成だった。
+- 2026-04-01 11:29:27 +0900 [検証] `http://localhost:12040/` で一覧モード切替を確認。初期表示は `サムネ表示`、`詳細表示` へ切替後も既存の `編集へ` `複製` `削除` が残り、再読込で選択モードが保持されることを確認。
+- 2026-04-01 11:29:27 +0900 [検証] `curl -I /api/issues/c1141fa4-9dbe-48b1-8957-2b1bfcddaccc/list-thumbnail` で `200 image/png` を確認し、localhost 実画面でも各 issue の1ページ目サムネと title が一望できる状態を確認。
+- 2026-04-01 11:36:03 +0900 [要望] 参照画像 `timg_01KN3EA9VKHT1VKE87B92BRMYA.png` で、一覧サムネ tile は「画像が上、説明と編集ボタンが下」だと確認。説明とボタンを上、画像を下へ入れ替える修正に着手。
+- 2026-04-01 11:36:03 +0900 [修正] `web-src/main.js` の issue thumbnail tile を組み替え、caption と `編集へ` を先頭、A4 サムネを後ろへ移動した。`web-src/app.css` の既存レイアウトはそのまま活かし、DOM 順だけで上下を入れ替えた。
+- 2026-04-01 11:36:03 +0900 [検証] `npm run build` と `cargo fmt` 後に `http://localhost:12040/` を再読込し、`サムネ表示` で「説明と編集ボタンが上、画像が下」へ変わったことを画面確認した。
+- 2026-04-01 12:01:57 +0900 [調査] `e773...` と `cd78...` の `list-thumbnail` は SHA-256 とサイズが完全一致。一方 `/print` の live preview 画像は data URL 長も見た目も異なり、一覧サムネだけが古い PNG を再利用していると確定。
+- 2026-04-01 12:01:57 +0900 [調査] root cause は `issue_thumbnail_caches` の invalidation が `issues.source_version` のみに依存しているのに、添付 upload / delete では `source_version` を進めていないこと。添付付きの `e773...` でも旧サムネが残留していた。
+- 2026-04-01 12:05:08 +0900 [修正] `src/main.rs` に `bump_issue_source_version()` を追加し、item/block 添付 upload と添付 delete の成功時に issue の `source_version` を進めるよう変更した。
+- 2026-04-01 12:05:08 +0900 [修正] `db/010_reset_issue_thumbnail_caches.sql` を追加し、既存の誤った `issue_thumbnail_caches` を一度空にして再生成させるようにした。
+- 2026-04-01 12:05:08 +0900 [検証] `curl` で `e773...` と `cd78...` の `list-thumbnail` を再取得し、SHA とサイズが分岐したことを確認。`e773...` は `ec72... / 43586 bytes`、`cd78...` は `3964... / 19794 bytes`。
+- 2026-04-01 12:05:08 +0900 [検証] localhost 一覧の `サムネ表示` を再読込し、`e773...` と `cd78...` が別サムネになったことを確認。臨時 draft issue の smoke test でも `thumbnail_url` の `v=` が save 後 `2`、添付 upload 後 `3`、添付 delete 後 `4` へ増えることを確認し、最後にその issue は削除した。
+- 2026-04-01 12:39:40 +0900 [codified-context] `codified-context-maintenance` を implementation-followup/debug-followup として実施。`AGENTS.md` と `context/repo-map.md` の一覧サムネ routing、`db/009_issue_thumbnail_caches.sql` / `db/010_reset_issue_thumbnail_caches.sql` の存在、添付変更時 `source_version` bump の current truth を点検した。

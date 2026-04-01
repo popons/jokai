@@ -11,6 +11,7 @@ const TITLE_FONT_FAMILY = '"Yu Gothic", "Hiragino Sans", sans-serif';
 const BODY_FONT_NAME = "JokaiBody";
 const BODY_BOLD_FONT_NAME = "JokaiBodyBold";
 const TITLE_FONT_NAME = "JokaiTitle";
+const DEFAULT_AGENDA_LABEL = "常会事項";
 const ITEM_META_LAYOUT_STACKED = "stacked";
 const ITEM_META_LAYOUT_SAME_LINE = "same_line";
 const ITEM_SUPPLEMENT_TONE_RED = "red";
@@ -349,13 +350,17 @@ function toJapaneseTime(value) {
 }
 
 function mainHeadingLabel(issue) {
-  return issue.issue_type === "no_meeting" ? "案内事項" : "常会事項";
+  return issue.issue_type === "no_meeting" ? "案内事項" : agendaLabel(issue);
 }
 
-function labelForBlockKind(blockKind) {
+function agendaLabel(issue) {
+  return normalizeText(issue?.agenda_label) || DEFAULT_AGENDA_LABEL;
+}
+
+function labelForBlockKind(blockKind, issue) {
   switch (blockKind) {
     case "agenda":
-      return "常会事項";
+      return agendaLabel(issue);
     case "submission":
       return "提出物";
     case "distribution":
@@ -980,8 +985,8 @@ function buildItemSupplementLayouts(item, typography) {
   });
 }
 
-function computeSectionHeadingGeometry(block, index, typography) {
-  const sectionTitle = `${index + 1}. ${block.heading || labelForBlockKind(block.block_kind)}`;
+function computeSectionHeadingGeometry(block, index, typography, issue) {
+  const sectionTitle = `${index + 1}. ${block.heading || labelForBlockKind(block.block_kind, issue)}`;
   const titleBlock = wrapText(sectionTitle, {
     widthMm: textWidthFromX(14),
     fontSizePt: typography.h1.section,
@@ -1053,8 +1058,8 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
   };
 }
 
-function addSectionHeading(page, block, index, rowTop, typography) {
-  const { content, height } = computeSectionHeadingGeometry(block, index, typography);
+function addSectionHeading(page, block, index, rowTop, typography, issue) {
+  const { content, height } = computeSectionHeadingGeometry(block, index, typography, issue);
   const sectionX = 14;
   pushTextSchema(
     page,
@@ -1074,7 +1079,7 @@ function addSectionHeading(page, block, index, rowTop, typography) {
   return height + 1.2;
 }
 
-function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
+function addItemRow(page, block, item, assets, itemIndex, rowTop, typography, issue) {
   const headingX = 18;
   const textWidth = textWidthFromX(headingX);
   const thumbScale = normalizeItemThumbnailScalePercent(item.thumb_scale_percent) / 100;
@@ -1179,7 +1184,7 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography) {
       y: itemTop + 0.3,
       width: THUMB_LABEL_WIDTH_MM,
       height: 11,
-      content: `【${labelForBlockKind(block.block_kind)}】\n対象者:${normalizeText(item.audience_label) || "全員"}`,
+      content: `【${labelForBlockKind(block.block_kind, issue)}】\n対象者:${normalizeText(item.audience_label) || "全員"}`,
       fontSize: typography.body.sideLabel,
       fontName: BODY_BOLD_FONT_NAME,
       lineHeight: typography.body.lineHeight.sideLabel,
@@ -1204,7 +1209,7 @@ function buildTemplate(issue, blocks, attachmentAssets, fontScale) {
     const items = normalizeItemRows(block);
     const firstAssets = attachmentAssets.get(attachmentAssetKey(block, items[0])) || [];
     const estimatedFirstRow =
-      computeSectionHeadingGeometry(block, index, typography).height +
+      computeSectionHeadingGeometry(block, index, typography, issue).height +
       computeItemGeometry(items[0], firstAssets, 0, typography).rowHeight +
       4;
     const remaining = pageBottomLimit - cursorY;
@@ -1215,7 +1220,7 @@ function buildTemplate(issue, blocks, attachmentAssets, fontScale) {
       cursorY = addContinuationHeader(page, issue, pages.length, typography) + 2;
     }
 
-    cursorY += addSectionHeading(page, block, index, cursorY, typography);
+    cursorY += addSectionHeading(page, block, index, cursorY, typography, issue);
 
     items.forEach((item, itemIndex) => {
       const assets = attachmentAssets.get(attachmentAssetKey(block, item)) || [];
@@ -1225,9 +1230,9 @@ function buildTemplate(issue, blocks, attachmentAssets, fontScale) {
         page = createPageTemplate();
         pages.push(page);
         cursorY = addContinuationHeader(page, issue, pages.length, typography) + 2;
-        cursorY += addSectionHeading(page, block, index, cursorY, typography);
+        cursorY += addSectionHeading(page, block, index, cursorY, typography, issue);
       }
-      const actualHeight = addItemRow(page, block, item, assets, itemIndex, cursorY, typography);
+      const actualHeight = addItemRow(page, block, item, assets, itemIndex, cursorY, typography, issue);
       cursorY += actualHeight + 2.8;
     });
 

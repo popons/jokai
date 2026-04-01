@@ -16,15 +16,18 @@
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信を担当。`農作業傷害共済` は `payload.rows[]` を single object 互換で正規化し、行数ベースの自動タイトルを返し、server-rendered `/template-documents/{id}/print` 正本 HTML、headless Chromium による `print-pdf` 生成、`preview-images` API もここで持つ。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
-| `web-src/main.js` | 文書ファミリー切替付き一覧画面、常会案内 editor、SVG テンプレ帳票 editor の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、rows[] 台帳 UI、補助 JSON editor、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替え、`thumb_scale_percent` による項目単位サムネ倍率 slider を担当。常会案内 editor の小項目 toolbar は、heading/body/対象者/期限/補足行/添付のいずれかがあるときだけ `①` などの番号を表示する。`農作業傷害共済` editor では 1 行 1 ページ前提で `payload.rows[]` を編集し、行編集または valid JSON 入力時に auto-save 後、server-side `preview-images` を再取得する |
-| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。小項目見出しの `①` などの番号は、紙面に出る内容が 1 つでもある item にだけ表示し、完全に空の item では番号も出さない。紙面内の見出し系・本文・補足・対象者/期限メタは赤い右ラベルの手前まで右へ伸ばし、サムネ重なりを許容する。最終ページ左下 footer メモも右下連絡先ブロックの直前まで横に伸ばす。右脇サムネは `thumb_scale_percent` で項目ごとに 80〜200% を右上基点で拡縮し、`measureImageDataUrl()` で実画像アスペクト比を測って「見えている画像」自体の right-top を固定する。画像自体は全テキストの背面へ置き、`pushTextSchema()` の halo は blank page の top padding を割らないよう clamp しつつ、現在は倍化した強めの white halo で重なった本文の可読性を守る。ただし footer 帯は例外で、page bottom 付近の halo text が `pdfme` の白紙ページ追加 bug を踏むため halo を載せない。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
+| `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、draft 限定削除、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信を担当。`issues.agenda_label` もここで read/save/duplicate し、常会案内を総会案内へ転用するときの議題見出し正本を保持する。`GET /api/issues` では一覧用 `thumbnail_url` も返し、`GET /api/issues/{id}/list-thumbnail` は print shell 由来 PDF の 1ページ目 PNG を cache 付きで返す。`農作業傷害共済` は `payload.rows[]` を single object 互換で正規化し、行数ベースの自動タイトルを返し、server-rendered `/template-documents/{id}/print` 正本 HTML、headless Chromium による `print-pdf` 生成、`preview-images` API もここで持つ。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
+| `web-src/main.js` | 文書ファミリー切替付き一覧画面、常会案内 editor、SVG テンプレ帳票 editor の状態管理、CRUD 呼び出し、一覧カード操作、常時プレビュー、rows[] 台帳 UI、補助 JSON editor、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替え、`thumb_scale_percent` による項目単位サムネ倍率 slider を担当。常会案内一覧の `既存の案内` は `サムネ表示` / `詳細表示` を切り替えられ、選択状態は `localStorage` に保存する。常会案内 editor では issue ごとの `agenda_label` を編集し、これを紙面の大見出しと `agenda` block 既定ラベルへ流す。小項目 toolbar は、heading/body/対象者/期限/補足行/添付のいずれかがあるときだけ `①` などの番号を表示する。`農作業傷害共済` editor では 1 行 1 ページ前提で `payload.rows[]` を編集し、行編集または valid JSON 入力時に auto-save 後、server-side `preview-images` を再取得する |
+| `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。1ページ目の大見出しと `agenda` block の既定ラベルは `issue.agenda_label` を使い、未設定時だけ `常会事項` にフォールバックする。小項目見出しの `①` などの番号は、紙面に出る内容が 1 つでもある item にだけ表示し、完全に空の item では番号も出さない。紙面内の見出し系・本文・補足・対象者/期限メタは赤い右ラベルの手前まで右へ伸ばし、サムネ重なりを許容する。最終ページ左下 footer メモも右下連絡先ブロックの直前まで横に伸ばす。右脇サムネは `thumb_scale_percent` で項目ごとに 80〜200% を右上基点で拡縮し、`measureImageDataUrl()` で実画像アスペクト比を測って「見えている画像」自体の right-top を固定する。画像自体は全テキストの背面へ置き、`pushTextSchema()` の halo は blank page の top padding を割らないよう clamp しつつ、現在は倍化した強めの white halo で重なった本文の可読性を守る。ただし footer 帯は例外で、page bottom 付近の halo text が `pdfme` の白紙ページ追加 bug を踏むため halo を載せない。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
 | `web-src/template-doc-registry.js` | `農作業傷害共済` の template 定義、binding キー、`payload.rows[]` の default/normalize、行単位必須チェック、タイトル自動生成規則の正本 |
 | `web-src/template-doc-pdf.js` | `templateDocumentPdfFileName()` と rows[] 対応の browser-side 補助 builder を持つ補助モジュール。`農作業傷害共済` の本線 preview / print / PDF 出力は 2026-03-19 時点で Chromium 経路が正本 |
 | `web-src/app.css` | 編集画面/プレビュー画面の UI スタイル。非印刷UIの余白密度もここで制御する |
 | `db/001_init.sql` | `issues` / `blocks` / `attachments` / `generated_files` 初期定義 |
 | `db/002_block_items.sql` | `block_items` 導入と添付の item 単位紐付け移行 |
 | `db/003_embedded_assets_and_attachment_blobs.sql` | 添付原本の DB blob 化、thumbnail cache、publish version 列、legacy path 列への改名 |
+| `db/008_issue_agenda_label.sql` | `issues.agenda_label` を追加し、常会/総会などの議題系見出しを issue 単位で可変化する |
+| `db/009_issue_thumbnail_caches.sql` | issue 一覧向け 1 ページ目 PNG の cache テーブル。`source_version` とセットで正誤判定する |
+| `db/010_reset_issue_thumbnail_caches.sql` | 既存の誤った一覧サムネ cache を一括削除して再生成させるための one-shot migration |
 | `db/007_template_documents.sql` | `template_documents` テーブル。`document_family` / `template_key` / `payload jsonb` / `template_asset_path` / `template_version` を保持する |
 | `bundled-assets/fonts/` | 紙面/PDF 用にバイナリへ埋め込む固定フォントと license。`NotoSansJP-VF.ttf` を生成元にし、配信用の `NotoSansJP-Regular.ttf` / `NotoSansJP-Bold.ttf` を持つ |
 | `20260319-templ-shogai-kyosai.svg` | `農作業傷害共済` v1 の SVG 正本。`inkscape:label="bind:..."` を意味、`id="bind-..."` を安定参照に使う |
@@ -112,14 +115,15 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 
 | Table | Role | Notes |
 |---|---|---|
-| `issues` | 案内全体 | `issue_type`, `status`, `meeting_date`, `place`, `header_note`, 最終ページ左下用 `footer_note` などを保持 |
-| `issues.source_version` / `published_*_version` | 再現用 version 刻印 | save ごとに `source_version` が増え、`published` 遷移時は source/layout/font/renderer の version を固定化する |
+| `issues` | 案内全体 | `issue_type`, `status`, `meeting_date`, `place`, `header_note`, 最終ページ左下用 `footer_note`, 議題系見出し用 `agenda_label` などを保持 |
+| `issues.source_version` / `published_*_version` | 再現用 version 刻印 | issue 保存に加え、紙面見た目が変わる item/block 添付の追加・削除でも `source_version` を進める。`published` 遷移時は source/layout/font/renderer の version を固定化する |
 | `blocks` | セクション単位 | `agenda` / `submission` / `distribution` / `info` / `freeform` |
 | `block_items` | 各ブロック内の箇条項目 | `db/002_block_items.sql` で導入。旧 `blocks.body` 系からの移行先。`meta_layout` は対象者/期限の紙面表示だけを `same_line` / `stacked` で保持し、`thumb_scale_percent` は項目単位の右脇サムネ倍率を保持する |
 | `block_item_supplements` | item ごとの補足行 | `db/005_block_item_supplements.sql` で導入。赤/青の補足行を複数保持し、旧 `block_items.note` は初回 migration 時に先頭の赤補足へ吸い上げる |
 | `attachments` | 添付メタデータ | `item_id` 単位で紐付け。原本/サムネ本体ではなく filename・mime・legacy path・紙面補助メタを持つ |
 | `attachment_original_contents` | 添付原本の正本 | `bytea` で原本 bytes を保持する。新規 upload はここが正本 |
 | `attachment_thumbnail_caches` | 添付サムネ cache | 画像添付は原本流用、PDF 添付は `pdftoppm` で 1 ページ目 PNG を生成して cache する |
+| `issue_thumbnail_caches` | issue 一覧サムネ cache | print shell 由来 PDF の 1ページ目 PNG を `source_version` 単位で保持し、`/api/issues/{id}/list-thumbnail` の正本 cache とする |
 | `generated_files` | legacy server-side PDF bookkeeping | テーブルと挿入コードは残るが、現行 browser-side 出力経路では未更新 |
 | `template_documents` | SVG テンプレ帳票の下書き | `document_family` / `template_key` / `payload jsonb` / `template_asset_path` / `template_version` を保持し、`issues` 系とは分離する。`payload` の正本は rows[] で、旧 single object は互換吸収する |
 
@@ -140,6 +144,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 | `GET/POST /api/issues` | issue 一覧と新規作成 |
 | `GET/PUT/DELETE /api/issues/{id}` | issue 詳細取得、保存、draft 限定削除 |
 | `POST /api/issues/{id}/duplicate` | issue / block / item / attachment を深い複製し、複製先の新しい issue id を返す |
+| `GET /api/issues/{id}/list-thumbnail` | issue 一覧向けの 1ページ目 PNG サムネ。print shell 由来 PDF を cache 付きで返す |
 | `GET/POST /api/template-documents` | SVG テンプレ帳票一覧と新規作成 |
 | `GET/PUT/DELETE /api/template-documents/{id}` | SVG テンプレ帳票の詳細取得、保存、削除 |
 | `GET /api/template-documents/{id}/preview-images` | 保存済み draft を headless Chromium で PDF 化し、`pdftoppm` で PNG preview 群へ変換する |
@@ -170,6 +175,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 - `農作業傷害共済` の print / PDF が崩れるときは、`drawSvg` ではなく rows[] を raw SVG へ展開する `/template-documents/{id}/print` と `src/main.rs` の headless Chromium 経路を優先確認する。
 - `農作業傷害共済` の一覧カードを触ったら、入力済み件数が `row_count` と一致すること、編集画面と印刷画面が同じ件数・同じページ数になることを確認する。
 - 一覧カードの操作を触ったら、`draft` で `複製` / `削除` が出ること、`published` の `削除` が disabled のまま API でも拒否されることを確認する。
+- 一覧サムネが古い/同じに見えるときは、`/issues/{id}/print` の live preview と `/api/issues/{id}/list-thumbnail` の 1ページ目 PNG を突き合わせ、`issues.source_version` と item/block 添付追加削除時の version bump が効いているかを見る。
 - item 添付導線を触ったら、ファイル選択、貼り付け欄での `Ctrl+V` / `Cmd+V`、`Clipboardから追加` ボタン、本文 textarea での通常テキスト貼り付け非干渉を確認する。
 - 小項目番号表示を触ったら、空の item では editor toolbar も紙面見出しも `①` を出さず、heading/body/対象者/期限/補足行/添付のどれかが入った時点で番号が出ることを確認する。
 - 本文右余白を触ったら、LIME 指摘の死帯が縮み、紙面内の見出し系・本文・補足・メタが赤い右ラベルの直前まで伸びつつ、サムネ重なりでも白ハローで読めることを確認する。

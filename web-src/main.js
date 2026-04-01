@@ -51,6 +51,7 @@ const issueTypeLabels = {
   no_meeting: "常会なし",
   one_off: "単発案内",
 };
+const DEFAULT_AGENDA_LABEL = "常会事項";
 
 const blockKindLabels = {
   agenda: "議題",
@@ -77,6 +78,7 @@ const itemSupplementToneLabels = {
   blue: "青",
 };
 const paperFontScaleStorageKey = "jokai.paper-font-scale.v1";
+const issueListModeStorageKey = "jokai.issue-list-mode.v1";
 
 const state = {
   meta: null,
@@ -86,6 +88,7 @@ const state = {
   templateDocument: null,
   templatePayloadText: "",
   activeFamily: boot.familyTab,
+  issueListMode: loadIssueListMode(),
   blocks: [],
   paperFontScale: loadPaperFontScale(),
   selectedAttachmentId: "",
@@ -106,6 +109,27 @@ const state = {
 
 const itemIndexLabels = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫"];
 let printShortcutPending = false;
+
+function normalizeIssueListMode(value) {
+  return value === "detail" ? "detail" : "thumb";
+}
+
+function loadIssueListMode() {
+  try {
+    const raw = window.localStorage.getItem(issueListModeStorageKey);
+    return normalizeIssueListMode(raw);
+  } catch {
+    return "thumb";
+  }
+}
+
+function persistIssueListMode() {
+  try {
+    window.localStorage.setItem(issueListModeStorageKey, state.issueListMode);
+  } catch {
+    // Ignore localStorage failures and keep the in-memory value.
+  }
+}
 
 function loadPaperFontScale() {
   try {
@@ -206,6 +230,7 @@ function normalizeIssue(issue) {
     issue_type: issue.issue_type || "normal",
     status: issue.status || "draft",
     title: issue.title || "",
+    agenda_label: issue.agenda_label || DEFAULT_AGENDA_LABEL,
     issue_month: issue.issue_month ? issue.issue_month.slice(0, 7) : "",
     meeting_date: issue.meeting_date || "",
     meeting_time: issue.meeting_time || "",
@@ -213,6 +238,20 @@ function normalizeIssue(issue) {
     header_note: issue.header_note || "",
     footer_note: issue.footer_note || "",
     published_at: issue.published_at || "",
+  };
+}
+
+function normalizeIssueListItem(issue = {}) {
+  return {
+    id: issue.id || "",
+    issue_type: issue.issue_type || "normal",
+    status: issue.status || "draft",
+    title: issue.title || "",
+    issue_month: issue.issue_month || "",
+    place: issue.place || "",
+    published_at: issue.published_at || "",
+    block_count: Number.isFinite(issue.block_count) ? issue.block_count : 0,
+    thumbnail_url: issue.thumbnail_url || "",
   };
 }
 
@@ -421,6 +460,7 @@ function payloadFromState() {
   return {
     issue_type: state.issue.issue_type,
     title: state.issue.title.trim(),
+    agenda_label: state.issue.agenda_label.trim(),
     issue_month: state.issue.issue_month ? `${state.issue.issue_month}-01` : "",
     meeting_date: state.issue.meeting_date,
     meeting_time: state.issue.meeting_time,
@@ -1198,6 +1238,59 @@ function renderIssueCards() {
     : `<div class="empty-state">まだ案内はありません。左の作成ボタンから最初の号を起こしてください。</div>`;
 }
 
+function renderIssueThumbnailCards() {
+  return state.issues.length
+    ? state.issues
+        .map((issue) => {
+          const editHref = `/issues/${encodeURIComponent(issue.id)}/edit`;
+          const month = monthLabel(issue.issue_month ? issue.issue_month.slice(0, 7) : "");
+          return `
+            <article class="issue-thumb-tile">
+              <div class="issue-thumb-caption">
+                <div class="issue-thumb-copy">
+                  <p class="issue-thumb-kicker">${escapeHtml(month)}</p>
+                  <h3 class="issue-thumb-title">${escapeHtml(issue.title)}</h3>
+                </div>
+                <a class="issue-link issue-thumb-edit" href="${editHref}">編集へ</a>
+              </div>
+              <a class="issue-thumb-media ${issue.thumbnail_url ? "" : "has-error"}" href="${editHref}" data-issue-thumb-media>
+                ${
+                  issue.thumbnail_url
+                    ? `<img class="issue-thumb-image" data-issue-thumbnail loading="lazy" decoding="async" src="${escapeHtml(issue.thumbnail_url)}" alt="${escapeHtml(`${issue.title || "案内"} の1ページ目サムネ`)}">`
+                    : ""
+                }
+                <span class="issue-thumb-placeholder issue-thumb-placeholder--loading">紙面を読込中</span>
+                <span class="issue-thumb-placeholder issue-thumb-placeholder--error">サムネを表示できません</span>
+              </a>
+            </article>
+          `;
+        })
+        .join("")
+    : `<div class="empty-state">まだ案内はありません。左の作成ボタンから最初の号を起こしてください。</div>`;
+}
+
+function renderIssueListModeToggle() {
+  return `
+    <div class="view-mode-toggle" role="group" aria-label="既存の案内の表示モード">
+      ${[
+        ["thumb", "サムネ表示"],
+        ["detail", "詳細表示"],
+      ]
+        .map(
+          ([value, label]) => `
+            <button
+              class="view-mode-button ${state.issueListMode === value ? "is-active" : ""}"
+              type="button"
+              aria-pressed="${state.issueListMode === value ? "true" : "false"}"
+              data-issue-list-mode="${value}"
+            >${label}</button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderTemplateDocumentCards() {
   const documents = state.templateDocuments.filter(
     (document) => document.document_family === SHOGAI_KYOSAI_FAMILY_KEY,
@@ -1231,6 +1324,8 @@ function renderTemplateDocumentCards() {
 }
 
 function renderIssueFamilyPanel() {
+  const isThumbMode = state.issueListMode === "thumb";
+  const issueListMarkup = isThumbMode ? renderIssueThumbnailCards() : renderIssueCards();
   return `
     <section class="workspace index-layout">
       <div class="panel">
@@ -1260,9 +1355,14 @@ function renderIssueFamilyPanel() {
 
       <div class="panel">
         <div class="panel-inner">
-          <h2 class="section-title">既存の案内</h2>
-          <p class="section-copy">草稿の一覧です。編集から資料アップロード、案内PDF出力まで進められます。</p>
-          <div class="list-grid">${renderIssueCards()}</div>
+          <div class="panel-heading panel-heading--issues">
+            <div>
+              <h2 class="section-title">既存の案内</h2>
+              <p class="section-copy">サムネで紙面を見渡すか、詳細で管理操作まで見るかを切り替えられます。</p>
+            </div>
+            ${renderIssueListModeToggle()}
+          </div>
+          <div class="${isThumbMode ? "issue-thumb-grid" : "list-grid"}" data-issue-list-surface="${isThumbMode ? "thumb" : "detail"}">${issueListMarkup}</div>
         </div>
       </div>
     </section>
@@ -1377,6 +1477,16 @@ function renderIndex() {
     });
   });
 
+  app.querySelectorAll("[data-issue-list-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.issueListMode = normalizeIssueListMode(button.getAttribute("data-issue-list-mode"));
+      persistIssueListMode();
+      renderIndex();
+    });
+  });
+
+  bindIssueThumbnailEvents(app);
+
   app.querySelectorAll("[data-create-issue]").forEach((button) => {
     button.addEventListener("click", async () => {
       const issueType = button.getAttribute("data-create-issue");
@@ -1419,6 +1529,32 @@ function renderIndex() {
       }
       await deleteTemplateDocument(templateDocumentId);
     });
+  });
+}
+
+function bindIssueThumbnailEvents(root = document) {
+  root.querySelectorAll("[data-issue-thumbnail]").forEach((image) => {
+    const media = image.closest("[data-issue-thumb-media]");
+    if (!media) {
+      return;
+    }
+    const markReady = () => {
+      media.classList.add("is-ready");
+      media.classList.remove("has-error");
+    };
+    const markError = () => {
+      media.classList.add("has-error");
+      media.classList.remove("is-ready");
+    };
+    image.addEventListener("load", markReady, { once: true });
+    image.addEventListener("error", markError, { once: true });
+    if (image.complete) {
+      if (image.naturalWidth > 0) {
+        markReady();
+      } else {
+        markError();
+      }
+    }
   });
 }
 
@@ -1542,6 +1678,10 @@ function renderEditor() {
               <div class="field field--wide">
                 <label>タイトル</label>
                 <input data-issue-field="title" value="${escapeHtml(issue.title)}" placeholder="例: 平古場生産組合 常会の案内">
+              </div>
+              <div class="field field--wide">
+                <label>議題見出し</label>
+                <input data-issue-field="agenda_label" value="${escapeHtml(issue.agenda_label)}" placeholder="例: 常会事項 / 総会事項">
               </div>
               <div class="field field--wide">
                 <label>場所</label>
@@ -2707,7 +2847,7 @@ async function loadIndex() {
       api("/api/template-documents"),
     ]);
     state.meta = meta;
-    state.issues = issues;
+    state.issues = issues.map(normalizeIssueListItem);
     state.templateDocuments = templateDocuments.map(normalizeTemplateDocument);
     state.activeFamily = normalizeFamilyKey(boot.familyTab || state.activeFamily);
     state.loading = false;

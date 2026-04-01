@@ -173,6 +173,7 @@ struct IssueListItem {
   place: String,
   published_at: Option<String>,
   block_count: i64,
+  thumbnail_url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -187,6 +188,7 @@ struct IssueDocumentIssue {
   issue_type: String,
   status: String,
   title: String,
+  agenda_label: String,
   issue_month: Option<String>,
   meeting_date: Option<String>,
   meeting_time: Option<String>,
@@ -329,6 +331,8 @@ struct PreviewRenderResponse {
 struct SaveIssuePayload {
   issue_type: String,
   title: String,
+  #[serde(default)]
+  agenda_label: String,
   #[serde(default)]
   issue_month: String,
   #[serde(default)]
@@ -611,6 +615,15 @@ fn duplicate_issue_title(title: &str) -> String {
     return "案内（複製）".to_string();
   }
   format!("{trimmed}（複製）")
+}
+
+fn normalize_agenda_label(value: &str) -> String {
+  let trimmed = value.trim();
+  if trimmed.is_empty() {
+    "常会事項".to_string()
+  } else {
+    trimmed.to_string()
+  }
 }
 
 fn resolve_template_document_descriptor(
@@ -1570,6 +1583,30 @@ async fn upsert_attachment_thumbnail_cache(
   Ok(())
 }
 
+async fn upsert_issue_thumbnail_cache(
+  client: &Client,
+  issue_id: &str,
+  source_version: i64,
+  mime_type: &str,
+  bytes: &[u8],
+) -> std::result::Result<(), (StatusCode, String)> {
+  client
+    .execute(
+      "insert into issue_thumbnail_caches (issue_id, source_version, mime_type, content)
+       values ((select id from issues where id::text = $1), $2, $3, $4)
+       on conflict (issue_id)
+       do update set
+         source_version = excluded.source_version,
+         mime_type = excluded.mime_type,
+         content = excluded.content,
+         updated_at = now()",
+      &[&issue_id, &source_version, &mime_type, &bytes],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+  Ok(())
+}
+
 async fn fetch_attachment_original_bytes(
   state: &AppState,
   attachment_id: &str,
@@ -1627,6 +1664,62 @@ async fn fetch_attachment_thumbnail_cache(
   Ok(row.map(|row| (row.get::<_, String>(0), row.get::<_, Vec<u8>>(1))))
 }
 
+async fn fetch_issue_source_version(
+  client: &Client,
+  issue_id: &str,
+) -> std::result::Result<Option<i64>, tokio_postgres::Error> {
+  let row = client
+    .query_opt(
+      "select source_version
+       from issues
+       where id::text = $1",
+      &[&issue_id],
+    )
+    .await?;
+
+  Ok(row.map(|row| row.get::<_, i64>(0)))
+}
+
+async fn bump_issue_source_version(
+  client: &Client,
+  issue_id: &str,
+) -> std::result::Result<(), (StatusCode, String)> {
+  client
+    .execute(
+      "update issues
+       set source_version = source_version + 1
+       where id::text = $1",
+      &[&issue_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+  Ok(())
+}
+
+async fn fetch_issue_thumbnail_cache(
+  state: &AppState,
+  issue_id: &str,
+) -> std::result::Result<Option<(i64, String, Vec<u8>)>, (StatusCode, String)> {
+  let row = state
+    .client
+    .query_opt(
+      "select source_version, mime_type, content
+       from issue_thumbnail_caches
+       where issue_id = (select id from issues where id::text = $1)",
+      &[&issue_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  Ok(row.map(|row| {
+    (
+      row.get::<_, i64>(0),
+      row.get::<_, String>(1),
+      row.get::<_, Vec<u8>>(2),
+    )
+  }))
+}
+
 fn legacy_thumbnail_mime_type(metadata: &AttachmentStorageMetadata) -> String {
   if attachment_display_kind(&metadata.mime_type) == "pdf" {
     "image/png".to_string()
@@ -1675,6 +1768,55 @@ fn render_pdf_thumbnail_png(
   let png_bytes = fs::read(&output_png).map_err(|err| {
     api_internal(format!(
       "failed to read generated thumbnail {}: {err}",
+      output_png.display()
+    ))
+  })?;
+  let _ = fs::remove_dir_all(&job_dir);
+  Ok(png_bytes)
+}
+
+fn render_issue_pdf_thumbnail_png(
+  state: &AppState,
+  issue_id: &str,
+  pdf_bytes: &[u8],
+) -> std::result::Result<Vec<u8>, (StatusCode, String)> {
+  let Some(pdftoppm_cmd) = &state.pdftoppm_cmd else {
+    return Err(api_internal(
+      "pdftoppm is required to build issue list thumbnails but was not found",
+    ));
+  };
+
+  let job_dir = preview_render_root(&state.runtime_dir).join(format!("{issue_id}-list-thumb"));
+  let _ = fs::remove_dir_all(&job_dir);
+  fs::create_dir_all(&job_dir).map_err(|err| api_internal(err.to_string()))?;
+
+  let input_pdf = job_dir.join("input.pdf");
+  let output_prefix = job_dir.join("thumb");
+  let output_png = job_dir.join("thumb.png");
+  fs::write(&input_pdf, pdf_bytes).map_err(|err| api_internal(err.to_string()))?;
+
+  let status = ProcessCommand::new(pdftoppm_cmd)
+    .arg("-png")
+    .arg("-singlefile")
+    .arg("-f")
+    .arg("1")
+    .arg("-scale-to")
+    .arg("440")
+    .arg(&input_pdf)
+    .arg(&output_prefix)
+    .status()
+    .map_err(|err| api_internal(format!("failed to launch pdftoppm: {err}")))?;
+
+  if !status.success() {
+    let _ = fs::remove_dir_all(&job_dir);
+    return Err(api_internal(
+      "pdftoppm failed while generating issue list thumbnail",
+    ));
+  }
+
+  let png_bytes = fs::read(&output_png).map_err(|err| {
+    api_internal(format!(
+      "failed to read generated issue list thumbnail {}: {err}",
       output_png.display()
     ))
   })?;
@@ -1999,15 +2141,45 @@ async fn generate_issue_pdf(
   state: &AppState,
   issue_id: &str,
 ) -> std::result::Result<Vec<u8>, (StatusCode, String)> {
+  let bytes = render_issue_pdf_bytes(state, issue_id).await?;
+  let output_dir = issue_generated_dir(&state.runtime_dir, issue_id);
+  fs::create_dir_all(&output_dir).map_err(|err| api_internal(err.to_string()))?;
+  let file_name = format!("notice-{}.pdf", unique_upload_stem());
+  let output_path = output_dir.join(&file_name);
+  fs::write(&output_path, &bytes).map_err(|err| api_internal(err.to_string()))?;
+  let relative_path = output_path
+    .strip_prefix(&state.runtime_dir)
+    .map(|path| path.to_string_lossy().to_string())
+    .unwrap_or_else(|_| output_path.to_string_lossy().to_string());
+
+  state
+    .client
+    .execute(
+      "insert into generated_files (issue_id, file_kind, storage_path)
+       values ((select id from issues where id::text = $1), 'pdf', $2)",
+      &[&issue_id, &relative_path],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
+  Ok(bytes)
+}
+
+async fn render_issue_pdf_bytes(
+  state: &AppState,
+  issue_id: &str,
+) -> std::result::Result<Vec<u8>, (StatusCode, String)> {
   let Some(browser_cmd) = &state.pdf_browser_cmd else {
     return Err(api_internal(
       "google-chrome/chromium is required for notice PDF generation but was not found",
     ));
   };
 
-  let output_dir = issue_generated_dir(&state.runtime_dir, issue_id);
+  let unique_stem = unique_upload_stem();
+  let output_dir =
+    preview_render_root(&state.runtime_dir).join(format!("{issue_id}-issue-pdf-{unique_stem}"));
   fs::create_dir_all(&output_dir).map_err(|err| api_internal(err.to_string()))?;
-  let file_name = format!("notice-{}.pdf", unique_upload_stem());
+  let file_name = format!("notice-{unique_stem}.pdf");
   let output_path = output_dir.join(&file_name);
   let browser_output_path_native = if browser_cmd.ends_with(".exe") {
     windows_temp_dir()
@@ -2029,25 +2201,41 @@ async fn generate_issue_pdf(
 
   let bytes = fs::read(&browser_output_path_native).map_err(|err| api_internal(err.to_string()))?;
   if browser_output_path_native != output_path {
-    fs::copy(&browser_output_path_native, &output_path)
-      .map_err(|err| api_internal(err.to_string()))?;
+    let _ = fs::remove_file(&browser_output_path_native);
   }
-  let relative_path = output_path
-    .strip_prefix(&state.runtime_dir)
-    .map(|path| path.to_string_lossy().to_string())
-    .unwrap_or_else(|_| output_path.to_string_lossy().to_string());
-
-  state
-    .client
-    .execute(
-      "insert into generated_files (issue_id, file_kind, storage_path)
-       values ((select id from issues where id::text = $1), 'pdf', $2)",
-      &[&issue_id, &relative_path],
-    )
-    .await
-    .map_err(|err| api_internal(err.to_string()))?;
+  let _ = fs::remove_dir_all(&output_dir);
 
   Ok(bytes)
+}
+
+async fn fetch_issue_list_thumbnail_bytes(
+  state: &AppState,
+  issue_id: &str,
+) -> std::result::Result<(String, Vec<u8>), (StatusCode, String)> {
+  let source_version = fetch_issue_source_version(&state.client, issue_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+    .ok_or_else(|| api_not_found("issue not found"))?;
+
+  if let Some((cached_source_version, mime_type, bytes)) =
+    fetch_issue_thumbnail_cache(state, issue_id).await?
+  {
+    if cached_source_version == source_version && !bytes.is_empty() {
+      return Ok((mime_type, bytes));
+    }
+  }
+
+  let pdf_bytes = render_issue_pdf_bytes(state, issue_id).await?;
+  let png_bytes = render_issue_pdf_thumbnail_png(state, issue_id, &pdf_bytes)?;
+  upsert_issue_thumbnail_cache(
+    &state.client,
+    issue_id,
+    source_version,
+    "image/png",
+    &png_bytes,
+  )
+  .await?;
+  Ok(("image/png".to_string(), png_bytes))
 }
 
 async fn generate_template_document_pdf(
@@ -2181,6 +2369,7 @@ async fn fetch_issue_document(
          issue_type,
          status,
          title,
+         agenda_label,
          to_char(issue_month, 'YYYY-MM-DD'),
          to_char(meeting_date, 'YYYY-MM-DD'),
          to_char(meeting_time, 'HH24:MI'),
@@ -2349,13 +2538,14 @@ async fn fetch_issue_document(
     issue_type: issue_row.get::<_, String>(1),
     status: issue_row.get::<_, String>(2),
     title: issue_row.get::<_, String>(3),
-    issue_month: issue_row.get::<_, Option<String>>(4),
-    meeting_date: issue_row.get::<_, Option<String>>(5),
-    meeting_time: issue_row.get::<_, Option<String>>(6),
-    place: issue_row.get::<_, String>(7),
-    header_note: issue_row.get::<_, String>(8),
-    footer_note: issue_row.get::<_, String>(9),
-    published_at: issue_row.get::<_, Option<String>>(10),
+    agenda_label: issue_row.get::<_, String>(4),
+    issue_month: issue_row.get::<_, Option<String>>(5),
+    meeting_date: issue_row.get::<_, Option<String>>(6),
+    meeting_time: issue_row.get::<_, Option<String>>(7),
+    place: issue_row.get::<_, String>(8),
+    header_note: issue_row.get::<_, String>(9),
+    footer_note: issue_row.get::<_, String>(10),
+    published_at: issue_row.get::<_, Option<String>>(11),
   };
 
   let blocks = block_rows
@@ -2871,10 +3061,11 @@ async fn api_issues(State(state): State<Arc<AppState>>) -> ApiResult<Vec<IssueLi
          to_char(i.issue_month, 'YYYY-MM-DD'),
          i.place,
          to_char(i.published_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-         count(b.id)::bigint
+         count(b.id)::bigint,
+         i.source_version
        from issues i
        left join blocks b on b.issue_id = i.id
-       group by i.id, i.issue_type, i.status, i.title, i.issue_month, i.place, i.published_at, i.created_at
+       group by i.id, i.issue_type, i.status, i.title, i.issue_month, i.place, i.published_at, i.source_version, i.created_at
        order by i.issue_month desc nulls last, i.created_at desc
        limit 100",
       &[],
@@ -2884,19 +3075,44 @@ async fn api_issues(State(state): State<Arc<AppState>>) -> ApiResult<Vec<IssueLi
 
   let issues = rows
     .into_iter()
-    .map(|row| IssueListItem {
-      id: row.get::<_, String>(0),
-      issue_type: row.get::<_, String>(1),
-      status: row.get::<_, String>(2),
-      title: row.get::<_, String>(3),
-      issue_month: row.get::<_, Option<String>>(4),
-      place: row.get::<_, String>(5),
-      published_at: row.get::<_, Option<String>>(6),
-      block_count: row.get::<_, i64>(7),
+    .map(|row| {
+      let id = row.get::<_, String>(0);
+      let source_version = row.get::<_, i64>(8);
+      IssueListItem {
+        thumbnail_url: format!(
+          "/api/issues/{}/list-thumbnail?v={source_version}",
+          sanitize_filename(&id)
+        ),
+        id,
+        issue_type: row.get::<_, String>(1),
+        status: row.get::<_, String>(2),
+        title: row.get::<_, String>(3),
+        issue_month: row.get::<_, Option<String>>(4),
+        place: row.get::<_, String>(5),
+        published_at: row.get::<_, Option<String>>(6),
+        block_count: row.get::<_, i64>(7),
+      }
     })
     .collect::<Vec<_>>();
 
   Ok(Json(issues))
+}
+
+async fn api_issue_list_thumbnail(
+  State(state): State<Arc<AppState>>,
+  RoutePath(issue_id): RoutePath<String>,
+) -> std::result::Result<impl IntoResponse, (StatusCode, String)> {
+  let (mime_type, bytes) = fetch_issue_list_thumbnail_bytes(&state, &issue_id).await?;
+  let mut headers = header::HeaderMap::new();
+  headers.insert(
+    header::CONTENT_TYPE,
+    header::HeaderValue::from_str(&mime_type).map_err(|err| api_internal(err.to_string()))?,
+  );
+  headers.insert(
+    header::CACHE_CONTROL,
+    header::HeaderValue::from_static("public, max-age=31536000, immutable"),
+  );
+  Ok((headers, bytes))
 }
 
 async fn api_create_issue(
@@ -3151,6 +3367,7 @@ async fn api_issue_save(
   let meeting_date = payload.meeting_date.trim().to_string();
   let meeting_time = payload.meeting_time.trim().to_string();
   let place = payload.place.trim().to_string();
+  let agenda_label = normalize_agenda_label(&payload.agenda_label);
   let header_note = payload.header_note.trim().to_string();
   let footer_note = payload.footer_note.trim().to_string();
   let title = payload.title.trim().to_string();
@@ -3161,17 +3378,19 @@ async fn api_issue_save(
       "update issues
        set issue_type = $1,
            title = $2,
-           issue_month = nullif($3, '')::date,
-           meeting_date = nullif($4, '')::date,
-           meeting_time = nullif($5, '')::time,
-           place = $6,
-           header_note = $7,
-           footer_note = $8,
+           agenda_label = $3,
+           issue_month = nullif($4, '')::date,
+           meeting_date = nullif($5, '')::date,
+           meeting_time = nullif($6, '')::time,
+           place = $7,
+           header_note = $8,
+           footer_note = $9,
            source_version = source_version + 1
-       where id::text = $9",
+       where id::text = $10",
       &[
         &payload.issue_type,
         &title,
+        &agenda_label,
         &issue_month,
         &meeting_date,
         &meeting_time,
@@ -3855,6 +4074,7 @@ async fn api_issue_duplicate(
       "select
          issue_type,
          title,
+         agenda_label,
          to_char(issue_month, 'YYYY-MM-DD'),
          to_char(meeting_date, 'YYYY-MM-DD'),
          to_char(meeting_time, 'HH24:MI'),
@@ -3872,19 +4092,20 @@ async fn api_issue_duplicate(
 
   let issue_type = source_issue_row.get::<_, String>(0);
   let source_title = source_issue_row.get::<_, String>(1);
+  let agenda_label = source_issue_row.get::<_, String>(2);
   let issue_month = source_issue_row
-    .get::<_, Option<String>>(2)
-    .unwrap_or_default();
-  let meeting_date = source_issue_row
     .get::<_, Option<String>>(3)
     .unwrap_or_default();
-  let meeting_time = source_issue_row
+  let meeting_date = source_issue_row
     .get::<_, Option<String>>(4)
     .unwrap_or_default();
-  let place = source_issue_row.get::<_, String>(5);
-  let header_note = source_issue_row.get::<_, String>(6);
-  let footer_note = source_issue_row.get::<_, String>(7);
-  let correction_of_issue_id = source_issue_row.get::<_, Option<String>>(8);
+  let meeting_time = source_issue_row
+    .get::<_, Option<String>>(5)
+    .unwrap_or_default();
+  let place = source_issue_row.get::<_, String>(6);
+  let header_note = source_issue_row.get::<_, String>(7);
+  let footer_note = source_issue_row.get::<_, String>(8);
+  let correction_of_issue_id = source_issue_row.get::<_, Option<String>>(9);
   let duplicated_title = duplicate_issue_title(&source_title);
 
   let duplicated_issue_row = state
@@ -3894,6 +4115,7 @@ async fn api_issue_duplicate(
          issue_type,
          status,
          title,
+         agenda_label,
          issue_month,
          meeting_date,
          meeting_time,
@@ -3907,19 +4129,21 @@ async fn api_issue_duplicate(
          $1,
          'draft',
          $2,
-         nullif($3, '')::date,
+         $3,
          nullif($4, '')::date,
-         nullif($5, '')::time,
-         $6,
+         nullif($5, '')::date,
+         nullif($6, '')::time,
          $7,
          $8,
-         nullif($9, '')::uuid,
+         $9,
+         nullif($10, '')::uuid,
          null
        )
        returning id::text",
       &[
         &issue_type,
         &duplicated_title,
+        &agenda_label,
         &issue_month,
         &meeting_date,
         &meeting_time,
@@ -4161,6 +4385,8 @@ async fn api_item_attachment_upload(
     return Err(api_bad_request("upload file is missing"));
   }
 
+  bump_issue_source_version(&state.client, &issue_id).await?;
+
   let document = fetch_issue_document(&state.client, &issue_id)
     .await
     .map_err(|err| api_internal(err.to_string()))?
@@ -4212,6 +4438,8 @@ async fn api_block_attachment_upload(
     return Err(api_bad_request("upload file is missing"));
   }
 
+  bump_issue_source_version(&state.client, &issue_id).await?;
+
   let document = fetch_issue_document(&state.client, &issue_id)
     .await
     .map_err(|err| api_internal(err.to_string()))?
@@ -4244,6 +4472,8 @@ async fn api_attachment_delete(
     )
     .await
     .map_err(|err| api_internal(err.to_string()))?;
+
+  bump_issue_source_version(&state.client, &issue_id).await?;
 
   let document = fetch_issue_document(&state.client, &issue_id)
     .await
@@ -4338,6 +4568,10 @@ async fn run_web(args: WebArgs) -> Result<()> {
         .delete(api_issue_delete),
     )
     .route("/api/issues/{id}/duplicate", post(api_issue_duplicate))
+    .route(
+      "/api/issues/{id}/list-thumbnail",
+      get(api_issue_list_thumbnail),
+    )
     .route(
       "/api/template-documents",
       get(api_template_documents).post(api_create_template_document),
