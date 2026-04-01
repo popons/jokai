@@ -51,7 +51,7 @@ const FRONTEND_FONT_BODY_BOLD: &str = "body-bold.ttf";
 const FRONTEND_FONT_TITLE: &str = "title.ttf";
 const CURRENT_LAYOUT_VERSION: &str = "notice-pdf-layout-v3";
 const CURRENT_FONT_VERSION: &str = "noto-sans-jp-static-v2";
-const CURRENT_RENDERER_VERSION: &str = "pdfme-raster-v3";
+const CURRENT_RENDERER_VERSION: &str = "pdfme-raster-v4";
 const FAMILY_TAB_ISSUES: &str = "issues";
 const TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI: &str = "shogai_kyosai";
 const TEMPLATE_DOCUMENT_KEY_JOIN_RENEWAL: &str = "join_renewal";
@@ -2395,6 +2395,39 @@ fn render_print_page_pdf_file(
   Ok(())
 }
 
+fn warm_print_page_preview(
+  browser_cmd: String,
+  print_url: String,
+) -> std::result::Result<(), String> {
+  let output = ProcessCommand::new(&browser_cmd)
+    .arg("--headless=new")
+    .arg("--disable-gpu")
+    .arg("--no-sandbox")
+    .arg("--disable-dev-shm-usage")
+    .arg("--disable-crash-reporter")
+    .arg("--no-first-run")
+    .arg("--no-default-browser-check")
+    .arg("--virtual-time-budget=20000")
+    .arg("--dump-dom")
+    .arg(&print_url)
+    .output()
+    .map_err(|err| format!("failed to launch browser for preview warm-up: {err}"))?;
+
+  if !output.status.success() {
+    return Err("browser preview warm-up failed".to_string());
+  }
+
+  if !output
+    .stdout
+    .windows(b"data:image/png;base64,".len())
+    .any(|window| window == b"data:image/png;base64,")
+  {
+    return Err("print page preview did not reach ready state".to_string());
+  }
+
+  Ok(())
+}
+
 #[allow(dead_code)]
 async fn generate_issue_pdf(
   state: &AppState,
@@ -2467,6 +2500,29 @@ async fn render_issue_pdf_bytes(
   Ok(bytes)
 }
 
+async fn warm_issue_print_preview(
+  state: &AppState,
+  issue_id: &str,
+) -> std::result::Result<(), (StatusCode, String)> {
+  let Some(browser_cmd) = &state.pdf_browser_cmd else {
+    return Err(api_internal(
+      "google-chrome/chromium is required to warm notice preview but was not found",
+    ));
+  };
+
+  let print_url = format!("{}/issues/{issue_id}/print", state.loopback_base_url);
+  tokio::task::spawn_blocking({
+    let browser_cmd = browser_cmd.clone();
+    let print_url = print_url.clone();
+    move || warm_print_page_preview(browser_cmd, print_url)
+  })
+  .await
+  .map_err(|err| api_internal(format!("failed to join preview warm-up worker: {err}")))?
+  .map_err(api_internal)?;
+
+  Ok(())
+}
+
 async fn fetch_issue_list_thumbnail_bytes(
   state: &AppState,
   issue_id: &str,
@@ -2488,6 +2544,7 @@ async fn fetch_issue_list_thumbnail_bytes(
     }
   }
 
+  warm_issue_print_preview(state, issue_id).await?;
   let pdf_bytes = render_issue_pdf_bytes(state, issue_id).await?;
   let png_bytes = render_issue_pdf_thumbnail_png(state, issue_id, &pdf_bytes)?;
   upsert_issue_thumbnail_cache(
