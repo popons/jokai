@@ -1,4 +1,4 @@
-<!-- v1 | last-verified: 2026-03-19 -->
+<!-- v1 | last-verified: 2026-04-01 -->
 # Jokai Repo Map
 
 ## Overview
@@ -16,8 +16,8 @@
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、draft 限定削除、発行 (`POST /api/issues/{id}/publish`)、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信を担当。`issues.agenda_label` もここで read/save/duplicate し、常会案内を総会案内へ転用するときの議題見出し正本を保持する。`GET /api/issues` では一覧用 `thumbnail_url` も返し、`GET /api/issues/{id}/list-thumbnail` は print shell 由来 PDF の 1ページ目 PNG を cache 付きで返す。`published` では save/delete だけでなく添付 mutation も拒否し、API 側の read-only を保証する。`農作業傷害共済` は `payload.rows[]` を single object 互換で正規化し、行数ベースの自動タイトルを返し、server-rendered `/template-documents/{id}/print` 正本 HTML、headless Chromium による `print-pdf` 生成、`preview-images` API もここで持つ。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
-| `web-src/main.js` | 文書ファミリー切替付き一覧画面、常会案内 editor、SVG テンプレ帳票 editor の状態管理、CRUD 呼び出し、発行、一覧カード操作、常時プレビュー、rows[] 台帳 UI、補助 JSON editor、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替え、`thumb_scale_percent` による項目単位サムネ倍率 slider を担当。常会案内一覧の `既存の案内` は `サムネ表示` / `詳細表示` を切り替えられ、選択状態は `localStorage` に保存する。常会案内 editor では issue ごとの `agenda_label` を編集し、これを紙面の大見出しと `agenda` block 既定ラベルへ流す。draft では `発行する` を出し、published では read-only 表示と `複製して編集` 導線に切り替える。小項目 toolbar は、heading/body/対象者/期限/補足行/添付のいずれかがあるときだけ `①` などの番号を表示する。`農作業傷害共済` editor では 1 行 1 ページ前提で `payload.rows[]` を編集し、行編集または valid JSON 入力時に auto-save 後、server-side `preview-images` を再取得する |
+| `src/main.rs` | Axum サーバー、埋め込み HTML/JS/CSS/紙面フォント配信、`issues` 系 CRUD、`template_documents` 系 CRUD、draft 限定削除、発行 (`POST /api/issues/{id}/publish`)、issue 深い複製、添付の DB 保存、内部 temp dir を使う `pdftoppm` preview / thumbnail 生成、印刷用 shell 配信を担当。`issues.agenda_label` もここで read/save/duplicate し、常会案内を総会案内へ転用するときの議題見出し正本を保持する。`GET /api/issues` では一覧用 `thumbnail_url` も返し、`GET /api/issues/{id}/list-thumbnail` は print shell 由来 PDF の 1ページ目 PNG を cache 付きで返す。常会案内 editor / print 用の preview PNG は `GET /api/issues/{id}/preview-cache` と `POST /api/preview-renders` の 50MB RAM LRU を持ち、`issue_id + source_version + font scale key` 一致時は初回表示で cached preview を返す。`published` では save/delete だけでなく添付 mutation も拒否し、API 側の read-only を保証する。`農作業傷害共済` は `payload.rows[]` を single object 互換で正規化し、行数ベースの自動タイトルを返し、server-rendered `/template-documents/{id}/print` 正本 HTML、headless Chromium による `print-pdf` 生成、`preview-images` API もここで持つ。legacy filesystem 吸い上げは web 起動時ではなく DB コマンドの明示 `--legacy-storage-dir` 側に寄せた |
+| `web-src/main.js` | 文書ファミリー切替付き一覧画面、常会案内 editor、SVG テンプレ帳票 editor の状態管理、CRUD 呼び出し、発行、一覧カード操作、常時プレビュー、rows[] 台帳 UI、補助 JSON editor、item 添付欄での Clipboard 画像登録、item ごとの補足行群（赤/青）編集、`meta_layout` による対象者/期限の並び替え、`thumb_scale_percent` による項目単位サムネ倍率 slider を担当。常会案内一覧の `既存の案内` は `サムネ表示` / `詳細表示` を切り替えられ、選択状態は `localStorage` に保存する。常会案内 editor / print は起動時に `font scale key` 付きで cached preview を取りに行き、ヒット時は blank placeholder へ戻さず cached PNG を先に表示する。draft では `発行する` を出し、published では read-only 表示と `複製して編集` 導線に切り替える。小項目 toolbar は、heading/body/対象者/期限/補足行/添付のいずれかがあるときだけ `①` などの番号を表示する。`農作業傷害共済` editor では 1 行 1 ページ前提で `payload.rows[]` を編集し、行編集または valid JSON 入力時に auto-save 後、server-side `preview-images` を再取得する |
 | `web-src/notice-pdf.js` | `pdfme` で A4 固定レイアウトを組み立てる紙面生成本体。item ごとの赤/青補足行群を本文直下へ入力順で縦積みし、`meta_layout` に応じて対象者/期限を同一行または縦積みで組版する。本文 `item.body`、補足行、対象者/期限メタ行は紙面上で一文字インデントする。1ページ目の大見出しと `agenda` block の既定ラベルは `issue.agenda_label` を使い、未設定時だけ `常会事項` にフォールバックする。小項目見出しの `①` などの番号は、紙面に出る内容が 1 つでもある item にだけ表示し、完全に空の item では番号も出さない。紙面内の見出し系・本文・補足・対象者/期限メタは赤い右ラベルの手前まで右へ伸ばし、サムネ重なりを許容する。最終ページ左下 footer メモも右下連絡先ブロックの直前まで横に伸ばす。右脇サムネは `thumb_scale_percent` で項目ごとに 80〜200% を右上基点で拡縮し、`measureImageDataUrl()` で実画像アスペクト比を測って「見えている画像」自体の right-top を固定する。画像自体は全テキストの背面へ置き、`pushTextSchema()` の halo は blank page の top padding を割らないよう clamp しつつ、現在は倍化した強めの white halo で重なった本文の可読性を守る。ただし footer 帯は例外で、page bottom 付近の halo text が `pdfme` の白紙ページ追加 bug を踏むため halo を載せない。`loadFonts()` は static instance の body/body-bold/title を読み込み、Thin 側へ落ちないようにしている |
 | `web-src/template-doc-registry.js` | `農作業傷害共済` の template 定義、binding キー、`payload.rows[]` の default/normalize、行単位必須チェック、タイトル自動生成規則の正本 |
 | `web-src/template-doc-pdf.js` | `templateDocumentPdfFileName()` と rows[] 対応の browser-side 補助 builder を持つ補助モジュール。`農作業傷害共済` の本線 preview / print / PDF 出力は 2026-03-19 時点で Chromium 経路が正本 |
@@ -69,8 +69,10 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 
 `web-src/notice-pdf.js` の `buildNoticePdfDocument(issue, blocks)`  
 -> ブラウザ内で notice PDF bytes を生成  
--> `POST /api/preview-renders` に PDF を multipart 送信  
+-> fresh page load では先に `GET /api/issues/{id}/preview-cache?font_scale_key=...` を叩き、`issue_id + source_version + font scale key` 一致の cached PNG があればそれを即表示する  
+-> miss または内容変更後は `POST /api/preview-renders` に PDF を multipart 送信  
 -> `src/main.rs` が `pdftoppm` で高DPI PNG 群へ変換  
+-> `dirty` でない editor / print preview は同じ key で 50MB RAM LRU を更新する  
 -> base64 data URL を `web-src/main.js` に返却  
 -> 編集画面の常時プレビューへ表示
 
@@ -148,6 +150,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 | `GET/PUT/DELETE /api/issues/{id}` | issue 詳細取得、保存、draft 限定削除 |
 | `POST /api/issues/{id}/duplicate` | issue / block / item / attachment を深い複製し、複製先の新しい issue id を返す |
 | `GET /api/issues/{id}/list-thumbnail` | issue 一覧向けの 1ページ目 PNG サムネ。print shell 由来 PDF を cache 付きで返す |
+| `GET /api/issues/{id}/preview-cache` | 常会案内 editor / print の初回表示用 RAM preview cache。`font_scale_key` が一致した cached PNG 群を返す |
 | `GET/POST /api/template-documents` | SVG テンプレ帳票一覧と新規作成 |
 | `GET/PUT/DELETE /api/template-documents/{id}` | SVG テンプレ帳票の詳細取得、保存、削除 |
 | `GET /api/template-documents/{id}/preview-images` | 保存済み draft を headless Chromium で PDF 化し、`pdftoppm` で PNG preview 群へ変換する |
@@ -156,7 +159,7 @@ item 添付欄では、ファイル選択・貼り付け欄での `Ctrl+V` / `Cm
 | `DELETE /api/attachments/{id}` | 添付削除 |
 | `GET /api/attachments/{id}/content` | 添付原本 |
 | `GET /api/attachments/{id}/thumbnail` | 添付サムネ |
-| `POST /api/preview-renders` | PDF bytes を PNG 群へ変換 |
+| `POST /api/preview-renders` | PDF bytes を PNG 群へ変換し、常会案内では必要に応じて RAM preview cache へ反映する |
 | `GET /api/issues/{id}/print-pdf` | deprecated な互換導線。利用者へ browser-side 出力へ移るよう案内する |
 
 ## Startup Notes

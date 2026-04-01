@@ -2,7 +2,7 @@
 
 use axum::{
   Json, Router,
-  extract::{DefaultBodyLimit, Multipart, Path as RoutePath, State},
+  extract::{DefaultBodyLimit, Multipart, Path as RoutePath, Query, State},
   http::{StatusCode, header},
   response::{Html, IntoResponse},
   routing::{delete, get, post},
@@ -14,14 +14,14 @@ use color_eyre::eyre::{Context, Result, bail, eyre};
 use include_dir::{Dir, include_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio_postgres::{Client, NoTls};
@@ -61,6 +61,7 @@ const TEMPLATE_DOCUMENT_STATUS_DRAFT: &str = "draft";
 const ISSUE_STATUS_DRAFT: &str = "draft";
 const ISSUE_STATUS_PUBLISHED: &str = "published";
 const NOTICE_PREVIEW_RENDER_DPI: u16 = 216;
+const ISSUE_PREVIEW_IMAGE_CACHE_MAX_BYTES: usize = 50 * 1024 * 1024;
 static EMBEDDED_FRONTEND_DIST: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/web-dist");
 static EMBEDDED_PAPER_FONT_BODY_BYTES: &[u8] = include_bytes!(concat!(
   env!("CARGO_MANIFEST_DIR"),
@@ -150,6 +151,7 @@ struct AppState {
   runtime_dir: PathBuf,
   database_url_redacted: String,
   applied_migrations: Arc<Vec<String>>,
+  issue_preview_image_cache: Arc<Mutex<IssuePreviewImageCache>>,
   #[allow(dead_code)]
   loopback_base_url: String,
   #[allow(dead_code)]
@@ -182,6 +184,7 @@ struct IssueListItem {
 struct IssueDocumentResponse {
   issue: IssueDocumentIssue,
   blocks: Vec<IssueDocumentBlock>,
+  navigation: IssueDocumentNavigation,
 }
 
 #[derive(Debug, Serialize)]
@@ -198,6 +201,20 @@ struct IssueDocumentIssue {
   header_note: String,
   footer_note: String,
   published_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct IssueDocumentNavigation {
+  newer: Option<IssueDocumentNavigationEntry>,
+  older: Option<IssueDocumentNavigationEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct IssueDocumentNavigationEntry {
+  id: String,
+  title: String,
+  issue_month: Option<String>,
+  status: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -327,6 +344,78 @@ struct DeleteTemplateDocumentResponse {
 #[derive(Debug, Serialize)]
 struct PreviewRenderResponse {
   images: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssuePreviewCacheQuery {
+  #[serde(default)]
+  font_scale_key: String,
+}
+
+#[derive(Debug, Default)]
+struct IssuePreviewImageCache {
+  max_bytes: usize,
+  total_bytes: usize,
+  order: VecDeque<String>,
+  entries: HashMap<String, IssuePreviewImageCacheEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct IssuePreviewImageCacheEntry {
+  images: Vec<Vec<u8>>,
+  total_bytes: usize,
+}
+
+impl IssuePreviewImageCache {
+  fn new(max_bytes: usize) -> Self {
+    Self {
+      max_bytes,
+      total_bytes: 0,
+      order: VecDeque::new(),
+      entries: HashMap::new(),
+    }
+  }
+
+  fn get(&mut self, key: &str) -> Option<Vec<Vec<u8>>> {
+    let images = self.entries.get(key).map(|entry| entry.images.clone())?;
+    self.touch(key);
+    Some(images)
+  }
+
+  fn insert(&mut self, key: String, images: Vec<Vec<u8>>) {
+    let total_bytes = images.iter().map(Vec::len).sum::<usize>();
+    if total_bytes == 0 || total_bytes > self.max_bytes {
+      return;
+    }
+
+    if let Some(previous) = self.entries.remove(&key) {
+      self.total_bytes = self.total_bytes.saturating_sub(previous.total_bytes);
+    }
+    self.order.retain(|existing| existing != &key);
+    self.total_bytes += total_bytes;
+    self.entries.insert(
+      key.clone(),
+      IssuePreviewImageCacheEntry {
+        images,
+        total_bytes,
+      },
+    );
+    self.order.push_back(key);
+
+    while self.total_bytes > self.max_bytes {
+      let Some(oldest_key) = self.order.pop_front() else {
+        break;
+      };
+      if let Some(entry) = self.entries.remove(&oldest_key) {
+        self.total_bytes = self.total_bytes.saturating_sub(entry.total_bytes);
+      }
+    }
+  }
+
+  fn touch(&mut self, key: &str) {
+    self.order.retain(|existing| existing != key);
+    self.order.push_back(key.to_string());
+  }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1682,6 +1771,70 @@ async fn fetch_issue_source_version(
   Ok(row.map(|row| row.get::<_, i64>(0)))
 }
 
+fn issue_preview_cache_key(issue_id: &str, source_version: i64, font_scale_key: &str) -> String {
+  format!("{issue_id}:{source_version}:{font_scale_key}")
+}
+
+fn encode_preview_image_data_urls(images: &[Vec<u8>]) -> Vec<String> {
+  images
+    .iter()
+    .map(|bytes| format!("data:image/png;base64,{}", BASE64_STANDARD.encode(bytes)))
+    .collect()
+}
+
+async fn fetch_cached_issue_preview_images(
+  state: &AppState,
+  issue_id: &str,
+  font_scale_key: &str,
+) -> std::result::Result<Option<Vec<String>>, (StatusCode, String)> {
+  let trimmed_font_scale_key = font_scale_key.trim();
+  if trimmed_font_scale_key.is_empty() {
+    return Ok(None);
+  }
+
+  let Some(source_version) = fetch_issue_source_version(&state.client, issue_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+  else {
+    return Ok(None);
+  };
+  let cache_key = issue_preview_cache_key(issue_id, source_version, trimmed_font_scale_key);
+  let cached = {
+    let mut cache = state
+      .issue_preview_image_cache
+      .lock()
+      .map_err(|err| api_internal(format!("issue preview cache lock poisoned: {err}")))?;
+    cache.get(&cache_key)
+  };
+  Ok(cached.map(|images| encode_preview_image_data_urls(&images)))
+}
+
+async fn cache_issue_preview_images(
+  state: &AppState,
+  issue_id: &str,
+  font_scale_key: &str,
+  images: &[Vec<u8>],
+) -> std::result::Result<(), (StatusCode, String)> {
+  let trimmed_font_scale_key = font_scale_key.trim();
+  if trimmed_font_scale_key.is_empty() || images.is_empty() {
+    return Ok(());
+  }
+
+  let Some(source_version) = fetch_issue_source_version(&state.client, issue_id)
+    .await
+    .map_err(|err| api_internal(err.to_string()))?
+  else {
+    return Ok(());
+  };
+  let cache_key = issue_preview_cache_key(issue_id, source_version, trimmed_font_scale_key);
+  let mut cache = state
+    .issue_preview_image_cache
+    .lock()
+    .map_err(|err| api_internal(format!("issue preview cache lock poisoned: {err}")))?;
+  cache.insert(cache_key, images.to_vec());
+  Ok(())
+}
+
 async fn fetch_issue_status(
   client: &Client,
   issue_id: &str,
@@ -2326,10 +2479,10 @@ async fn generate_template_document_pdf(
   Ok(bytes)
 }
 
-fn rasterize_pdf_bytes_to_images(
+fn rasterize_pdf_bytes_to_png_bytes(
   state: &AppState,
   pdf_bytes: &[u8],
-) -> std::result::Result<Vec<String>, (StatusCode, String)> {
+) -> std::result::Result<Vec<Vec<u8>>, (StatusCode, String)> {
   let Some(pdftoppm_cmd) = &state.pdftoppm_cmd else {
     return Err(api_internal(
       "pdftoppm is required for preview rendering but was not found",
@@ -2382,13 +2535,20 @@ fn rasterize_pdf_bytes_to_images(
     .into_iter()
     .map(|path| {
       fs::read(&path)
-        .map(|bytes| format!("data:image/png;base64,{}", BASE64_STANDARD.encode(bytes)))
         .map_err(|err| api_internal(format!("failed to read {}: {err}", path.display())))
     })
     .collect::<std::result::Result<Vec<_>, _>>()?;
 
   let _ = fs::remove_dir_all(&job_dir);
   Ok(images)
+}
+
+fn rasterize_pdf_bytes_to_images(
+  state: &AppState,
+  pdf_bytes: &[u8],
+) -> std::result::Result<Vec<String>, (StatusCode, String)> {
+  let images = rasterize_pdf_bytes_to_png_bytes(state, pdf_bytes)?;
+  Ok(encode_preview_image_data_urls(&images))
 }
 
 async fn fetch_issue_document(
@@ -2420,6 +2580,8 @@ async fn fetch_issue_document(
   let Some(issue_row) = issue_row else {
     return Ok(None);
   };
+
+  let navigation = fetch_issue_navigation(client, &issue_id).await?;
 
   let block_rows = client
     .query(
@@ -2627,7 +2789,53 @@ async fn fetch_issue_document(
     })
     .collect::<Vec<_>>();
 
-  Ok(Some(IssueDocumentResponse { issue, blocks }))
+  Ok(Some(IssueDocumentResponse {
+    issue,
+    blocks,
+    navigation,
+  }))
+}
+
+async fn fetch_issue_navigation(
+  client: &Client,
+  issue_id: &str,
+) -> std::result::Result<IssueDocumentNavigation, tokio_postgres::Error> {
+  let rows = client
+    .query(
+      "select
+         id::text,
+         title,
+         to_char(issue_month, 'YYYY-MM-DD'),
+         status
+       from issues
+       order by issue_month desc nulls last, created_at desc, id desc",
+      &[],
+    )
+    .await?;
+
+  let entries = rows
+    .into_iter()
+    .map(|row| IssueDocumentNavigationEntry {
+      id: row.get::<_, String>(0),
+      title: row.get::<_, String>(1),
+      issue_month: row.get::<_, Option<String>>(2),
+      status: row.get::<_, String>(3),
+    })
+    .collect::<Vec<_>>();
+
+  let Some(index) = entries.iter().position(|entry| entry.id == issue_id) else {
+    return Ok(IssueDocumentNavigation {
+      newer: None,
+      older: None,
+    });
+  };
+
+  Ok(IssueDocumentNavigation {
+    newer: index
+      .checked_sub(1)
+      .and_then(|entry_index| entries.get(entry_index).cloned()),
+    older: entries.get(index + 1).cloned(),
+  })
 }
 
 async fn fetch_template_document(
@@ -3010,25 +3218,70 @@ async fn api_preview_rasterize(
   mut multipart: Multipart,
 ) -> ApiResult<PreviewRenderResponse> {
   let mut pdf_bytes = None;
+  let mut cache_issue_id = String::new();
+  let mut cache_font_scale_key = String::new();
+  let mut cache_bypass = false;
   while let Some(field) = multipart
     .next_field()
     .await
     .map_err(|err| api_internal(err.to_string()))?
   {
-    if field.name() == Some("file") {
-      let bytes = field
-        .bytes()
-        .await
-        .map_err(|err| api_internal(err.to_string()))?;
-      pdf_bytes = Some(bytes);
-      break;
+    match field.name() {
+      Some("file") => {
+        let bytes = field
+          .bytes()
+          .await
+          .map_err(|err| api_internal(err.to_string()))?;
+        pdf_bytes = Some(bytes);
+      }
+      Some("cache_issue_id") => {
+        cache_issue_id = field
+          .text()
+          .await
+          .map_err(|err| api_internal(err.to_string()))?;
+      }
+      Some("cache_font_scale_key") => {
+        cache_font_scale_key = field
+          .text()
+          .await
+          .map_err(|err| api_internal(err.to_string()))?;
+      }
+      Some("cache_bypass") => {
+        cache_bypass = field
+          .text()
+          .await
+          .map_err(|err| api_internal(err.to_string()))?
+          == "1";
+      }
+      _ => {}
     }
+  }
+
+  if !cache_bypass
+    && let Some(images) =
+      fetch_cached_issue_preview_images(&state, &cache_issue_id, &cache_font_scale_key).await?
+  {
+    return Ok(Json(PreviewRenderResponse { images }));
   }
 
   let Some(pdf_bytes) = pdf_bytes else {
     return Err(api_bad_request("preview PDF file is missing"));
   };
-  let images = rasterize_pdf_bytes_to_images(&state, pdf_bytes.as_ref())?;
+  let png_images = rasterize_pdf_bytes_to_png_bytes(&state, pdf_bytes.as_ref())?;
+  cache_issue_preview_images(&state, &cache_issue_id, &cache_font_scale_key, &png_images).await?;
+  Ok(Json(PreviewRenderResponse {
+    images: encode_preview_image_data_urls(&png_images),
+  }))
+}
+
+async fn api_issue_cached_preview(
+  State(state): State<Arc<AppState>>,
+  RoutePath(issue_id): RoutePath<String>,
+  Query(query): Query<IssuePreviewCacheQuery>,
+) -> ApiResult<PreviewRenderResponse> {
+  let images = fetch_cached_issue_preview_images(&state, &issue_id, &query.font_scale_key)
+    .await?
+    .unwrap_or_default();
   Ok(Json(PreviewRenderResponse { images }))
 }
 
@@ -3100,7 +3353,7 @@ async fn api_issues(State(state): State<Arc<AppState>>) -> ApiResult<Vec<IssueLi
        from issues i
        left join blocks b on b.issue_id = i.id
        group by i.id, i.issue_type, i.status, i.title, i.issue_month, i.place, i.published_at, i.source_version, i.created_at
-       order by i.issue_month desc nulls last, i.created_at desc
+       order by i.issue_month desc nulls last, i.created_at desc, i.id desc
        limit 100",
       &[],
     )
@@ -4599,6 +4852,9 @@ async fn run_web(args: WebArgs) -> Result<()> {
     runtime_dir: runtime_dir.clone(),
     database_url_redacted: redact_database_url(&args.database_url),
     applied_migrations,
+    issue_preview_image_cache: Arc::new(Mutex::new(IssuePreviewImageCache::new(
+      ISSUE_PREVIEW_IMAGE_CACHE_MAX_BYTES,
+    ))),
     loopback_base_url,
     pdf_browser_cmd: google_chrome_command(),
     pdftoppm_cmd: pdftoppm_command(),
@@ -4640,6 +4896,10 @@ async fn run_web(args: WebArgs) -> Result<()> {
     .route(
       "/api/issues/{id}/list-thumbnail",
       get(api_issue_list_thumbnail),
+    )
+    .route(
+      "/api/issues/{id}/preview-cache",
+      get(api_issue_cached_preview),
     )
     .route(
       "/api/template-documents",

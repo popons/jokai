@@ -89,6 +89,7 @@ const state = {
   issues: [],
   templateDocuments: [],
   issue: null,
+  issueNavigation: { newer: null, older: null },
   templateDocument: null,
   templatePayloadText: "",
   activeFamily: boot.familyTab,
@@ -243,6 +244,25 @@ function normalizeIssue(issue) {
     header_note: issue.header_note || "",
     footer_note: issue.footer_note || "",
     published_at: issue.published_at || "",
+  };
+}
+
+function normalizeIssueNavigationEntry(entry = null) {
+  if (!entry || !entry.id) {
+    return null;
+  }
+  return {
+    id: entry.id || "",
+    title: entry.title || "",
+    issue_month: entry.issue_month ? String(entry.issue_month).slice(0, 7) : "",
+    status: normalizeIssueStatus(entry.status),
+  };
+}
+
+function normalizeIssueNavigation(navigation = {}) {
+  return {
+    newer: normalizeIssueNavigationEntry(navigation.newer),
+    older: normalizeIssueNavigationEntry(navigation.older),
   };
 }
 
@@ -514,6 +534,29 @@ function renderIssueReadonlyBanner(issue = state.issue) {
     ? `${issue.published_at} に発行済みです。`
     : "この案内は発行済みです。";
   return `<div class="flash flash--warning">${escapeHtml(`${publishedSummary} この画面では直接編集できません。修正は「複製して編集」から新しい下書きで行ってください。`)}</div>`;
+}
+
+function issueNavigationTooltip(entry) {
+  if (!entry) {
+    return "";
+  }
+  const parts = [issueStatusLabel(entry.status), monthLabel(entry.issue_month), entry.title || "無題の案内"];
+  return parts.filter(Boolean).join(" / ");
+}
+
+function renderIssueNavigationLink(entry, direction) {
+  const isNewer = direction === "newer";
+  const label = isNewer ? "&larr; 新しい案内" : "古い案内 &rarr;";
+  if (!entry) {
+    return `<span class="ghost-link ghost-link--disabled issue-nav-link" aria-disabled="true">${label}</span>`;
+  }
+  return `
+    <a
+      class="ghost-link issue-nav-link"
+      href="/issues/${encodeURIComponent(entry.id)}/edit"
+      title="${escapeHtml(issueNavigationTooltip(entry))}"
+    >${label}</a>
+  `;
 }
 
 async function syncIssueAfterReadonlyConflict(
@@ -1662,7 +1705,7 @@ function bindIssueThumbnailEvents(root = document) {
   });
 }
 
-function renderEditor() {
+function renderEditor(skipPreview = false) {
   if (!state.issue) {
     renderLoading("編集画面を準備中です", "対象の号を取得しています。");
     return;
@@ -1743,6 +1786,8 @@ function renderEditor() {
       <div class="editor-actions">
         <div class="editor-actions-group">
           <a class="ghost-link" href="/issues">一覧へ戻る</a>
+          ${renderIssueNavigationLink(state.issueNavigation.newer, "newer")}
+          ${renderIssueNavigationLink(state.issueNavigation.older, "older")}
           <span class="badge badge--accent">${escapeHtml(issueTypeLabels[issue.issue_type] || issue.issue_type)}</span>
           <span class="badge ${issueStatusBadgeClass(issue.status)}">${escapeHtml(issueStatusLabel(issue.status))}</span>
           <span class="issue-card-stat">${escapeHtml(issuePublishedStat(issue))}</span>
@@ -1845,7 +1890,9 @@ function renderEditor() {
   `;
 
   bindEditEvents();
-  schedulePreview("render-editor");
+  if (!skipPreview) {
+    schedulePreview("render-editor");
+  }
 }
 
 function renderTemplateLedgerRow(document, definition, row, rowIndex, rowIssues = []) {
@@ -2096,7 +2143,7 @@ function renderTemplateDocumentEditor(skipPreview = false) {
   }
 }
 
-function renderPrintPage() {
+function renderPrintPage(skipPreview = false) {
   if (!state.issue) {
     renderLoading("印刷紙面を準備中です", "保存済みの案内を読込んでいます。");
     return;
@@ -2121,7 +2168,9 @@ function renderPrintPage() {
   `;
 
   bindPrintEvents();
-  schedulePreview("render-print");
+  if (!skipPreview) {
+    schedulePreview("render-print");
+  }
 }
 
 function renderTemplateDocumentPrintPage(skipPreview = false) {
@@ -2186,13 +2235,61 @@ function updatePreviewDom() {
   updateTemplatePreviewWarningDom();
 }
 
-async function rasterizePreview(bytes) {
+async function rasterizePreview(bytes, { useIssuePreviewCache = true } = {}) {
   const formData = new FormData();
   formData.append("file", new Blob([bytes], { type: "application/pdf" }), "preview.pdf");
+  if (!state.dirty && state.issue?.id) {
+    formData.append("cache_issue_id", state.issue.id);
+    formData.append("cache_font_scale_key", currentIssuePreviewFontScaleCacheKey());
+    if (!useIssuePreviewCache) {
+      formData.append("cache_bypass", "1");
+    }
+  }
   return api("/api/preview-renders", {
     method: "POST",
     body: formData,
   });
+}
+
+function currentIssuePreviewFontScaleCacheKey(fontScale = state.paperFontScale) {
+  const normalized = normalizePaperFontScale(fontScale);
+  return PAPER_FONT_SCALE_ORDER
+    .map((category) => `${category}:${normalized[category]}`)
+    .join("|");
+}
+
+async function fetchCachedIssuePreviewImages(issueId = state.issue?.id || boot.issueId) {
+  if (!issueId) {
+    return { images: [] };
+  }
+  return api(
+    `/api/issues/${encodeURIComponent(issueId)}/preview-cache?font_scale_key=${encodeURIComponent(currentIssuePreviewFontScaleCacheKey())}`,
+  );
+}
+
+async function hydrateCachedIssuePreview(issueId = state.issue?.id || boot.issueId) {
+  if (!issueId) {
+    state.previewImages = [];
+    state.previewReadyAt = "";
+    return false;
+  }
+  try {
+    const preview = await fetchCachedIssuePreviewImages(issueId);
+    const images = Array.isArray(preview.images) ? preview.images : [];
+    state.previewImages = images;
+    state.previewReadyAt = images.length
+      ? new Date().toLocaleTimeString("ja-JP", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      : "";
+    return images.length > 0;
+  } catch {
+    state.previewImages = [];
+    state.previewReadyAt = "";
+    return false;
+  }
 }
 
 async function fetchTemplateDocumentPreviewImages(templateDocumentId = state.templateDocument?.id || boot.templateDocumentId) {
@@ -2305,7 +2402,9 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
 
     clearTemplatePreviewWarning();
     state.previewBytes = bytes;
-    const preview = await rasterizePreview(bytes);
+    const preview = await rasterizePreview(bytes, {
+      useIssuePreviewCache: reason !== "manual-refresh",
+    });
     if (generation !== state.previewGeneration) {
       return;
     }
@@ -3006,6 +3105,7 @@ async function loadIndex() {
 async function loadIssueDocument() {
   const documentPayload = await api(`/api/issues/${boot.issueId}`);
   state.issue = normalizeIssue(documentPayload.issue);
+  state.issueNavigation = normalizeIssueNavigation(documentPayload.navigation);
   state.blocks = documentPayload.blocks.map(normalizeBlock);
   ensureSelectedAttachment();
 }
@@ -3024,14 +3124,16 @@ async function loadEditor() {
   clearTemplatePreviewWarning();
   renderLoading("編集画面を読込中です", "対象の号と block 群を取得しています。");
   try {
-    const [meta] = await Promise.all([api("/api/meta"), loadIssueDocument()]);
+    const [meta, , hydratedFromCache] = await Promise.all([
+      api("/api/meta"),
+      loadIssueDocument(),
+      hydrateCachedIssuePreview(),
+    ]);
     state.meta = meta;
     state.loading = false;
     state.dirty = false;
     state.previewBytes = null;
-    state.previewImages = [];
-    state.previewReadyAt = "";
-    renderEditor();
+    renderEditor(hydratedFromCache);
   } catch (error) {
     state.loading = false;
     state.error = error.message;
@@ -3043,12 +3145,13 @@ async function loadPrint() {
   state.loading = true;
   renderLoading("印刷紙面を読込中です", "案内PDFの元データを取得しています。");
   try {
-    await loadIssueDocument();
+    const [, hydratedFromCache] = await Promise.all([
+      loadIssueDocument(),
+      hydrateCachedIssuePreview(),
+    ]);
     state.loading = false;
     state.previewBytes = null;
-    state.previewImages = [];
-    state.previewReadyAt = "";
-    renderPrintPage();
+    renderPrintPage(hydratedFromCache);
   } catch (error) {
     state.loading = false;
     state.error = error.message;
@@ -3110,6 +3213,7 @@ async function saveEditor() {
       body: payloadFromState(),
     });
     state.issue = normalizeIssue(documentPayload.issue);
+    state.issueNavigation = normalizeIssueNavigation(documentPayload.navigation);
     state.blocks = documentPayload.blocks.map(normalizeBlock);
     ensureSelectedAttachment();
     state.dirty = false;
@@ -3152,6 +3256,7 @@ async function publishIssueFromEditor() {
       method: "POST",
     });
     state.issue = normalizeIssue(documentPayload.issue);
+    state.issueNavigation = normalizeIssueNavigation(documentPayload.navigation);
     state.blocks = documentPayload.blocks.map(normalizeBlock);
     ensureSelectedAttachment();
     state.dirty = false;
