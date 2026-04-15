@@ -85,6 +85,8 @@ const itemSupplementToneLabels = {
 const paperFontScaleStorageKey = "jokai.paper-font-scale.v1";
 const issueListModeStorageKey = "jokai.issue-list-mode.v1";
 
+let editorNodeSequence = 0;
+
 const state = {
   meta: null,
   issues: [],
@@ -97,6 +99,7 @@ const state = {
   issueListMode: loadIssueListMode(),
   blocks: [],
   paperFontScale: loadPaperFontScale(),
+  editorCollapse: createEditorCollapseState(),
   selectedAttachmentId: "",
   loading: true,
   saving: false,
@@ -176,6 +179,34 @@ function adjustPaperFontScale(category, delta) {
 function resetPaperFontScale() {
   state.paperFontScale = { ...PAPER_FONT_SCALE_DEFAULTS };
   persistPaperFontScale();
+}
+
+function createEditorCollapseState() {
+  return {
+    issueMeta: false,
+    fontScale: false,
+    blocks: Object.create(null),
+    items: Object.create(null),
+  };
+}
+
+function nextEditorNodeKey(prefix) {
+  editorNodeSequence += 1;
+  return `${prefix}-${Date.now().toString(36)}-${editorNodeSequence.toString(36)}`;
+}
+
+function compactText(value) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function truncateText(value, maxLength = 72) {
+  const text = compactText(value);
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function escapeHtml(value) {
@@ -392,6 +423,7 @@ function normalizeItem(item = {}) {
       : [];
   return {
     id: item.id || "",
+    editor_key: item.editor_key || nextEditorNodeKey("item"),
     heading: item.heading || "",
     body: item.body || "",
     audience_label: item.audience_label || "",
@@ -407,11 +439,47 @@ function normalizeItem(item = {}) {
 function normalizeBlock(block = {}) {
   return {
     id: block.id || "",
+    editor_key: block.editor_key || nextEditorNodeKey("block"),
     block_kind: block.block_kind || "freeform",
     heading: block.heading || "",
     sort_order: block.sort_order || 0,
     items: Array.isArray(block.items) ? block.items.map(normalizeItem) : [],
   };
+}
+
+function normalizeBlocks(blocks = [], previousBlocks = []) {
+  const previousBlocksById = new Map();
+  previousBlocks.forEach((block) => {
+    if (block?.id) {
+      previousBlocksById.set(block.id, block);
+    }
+  });
+
+  return (Array.isArray(blocks) ? blocks : []).map((block, blockIndex) => {
+    const previousBlock = (block?.id && previousBlocksById.get(block.id)) || previousBlocks[blockIndex] || null;
+    const previousItems = previousBlock?.items || [];
+    const previousItemsById = new Map();
+    previousItems.forEach((item) => {
+      if (item?.id) {
+        previousItemsById.set(item.id, item);
+      }
+    });
+
+    const normalized = normalizeBlock({
+      ...block,
+      editor_key: block?.editor_key || previousBlock?.editor_key || nextEditorNodeKey("block"),
+      items: (Array.isArray(block?.items) ? block.items : []).map((item, itemIndex) => {
+        const previousItem =
+          (item?.id && previousItemsById.get(item.id)) || previousItems[itemIndex] || null;
+        return normalizeItem({
+          ...item,
+          editor_key: item?.editor_key || previousItem?.editor_key || nextEditorNodeKey("item"),
+        });
+      }),
+    });
+
+    return normalized;
+  });
 }
 
 function initialBlock(blockKind = "freeform") {
@@ -579,6 +647,13 @@ async function syncIssueAfterReadonlyConflict(
     state.error = `${message} / 再読込にも失敗しました: ${reloadError.message}`;
     return false;
   }
+}
+
+function applyIssueDocumentPayload(documentPayload) {
+  state.issue = normalizeIssue(documentPayload.issue);
+  state.issueNavigation = normalizeIssueNavigation(documentPayload.navigation);
+  state.blocks = normalizeBlocks(documentPayload.blocks, state.blocks);
+  ensureSelectedAttachment();
 }
 
 function payloadFromState() {
@@ -895,10 +970,8 @@ async function uploadAttachmentFile(itemId, file, successMessage = "資料を追
       method: "POST",
       body: formData,
     });
-    state.issue = normalizeIssue(documentPayload.issue);
-    state.blocks = documentPayload.blocks.map(normalizeBlock);
+    applyIssueDocumentPayload(documentPayload);
     state.notice = successMessage;
-    ensureSelectedAttachment();
     return true;
   } catch (error) {
     if (await syncIssueAfterReadonlyConflict(error)) {
@@ -1210,18 +1283,168 @@ function renderSupplementRows(item, blockIndex, itemIndex, readOnly = issueEdito
     .join("");
 }
 
-function renderItemCard(block, blockIndex, item, itemIndex, readOnly = issueEditorReadOnly()) {
-  const itemIndexLabel = itemHasVisibleContent(item) ? `${itemMarker(itemIndex)} 項目` : "項目";
+function syncEditorCollapseState() {
+  const nextBlocks = Object.create(null);
+  const nextItems = Object.create(null);
+
+  state.blocks.forEach((block) => {
+    if (!block.editor_key) {
+      block.editor_key = nextEditorNodeKey("block");
+    }
+    nextBlocks[block.editor_key] = Boolean(state.editorCollapse.blocks[block.editor_key]);
+
+    block.items.forEach((item) => {
+      if (!item.editor_key) {
+        item.editor_key = nextEditorNodeKey("item");
+      }
+      nextItems[item.editor_key] = Boolean(state.editorCollapse.items[item.editor_key]);
+    });
+  });
+
+  state.editorCollapse = {
+    issueMeta: Boolean(state.editorCollapse.issueMeta),
+    fontScale: Boolean(state.editorCollapse.fontScale),
+    blocks: nextBlocks,
+    items: nextItems,
+  };
+}
+
+function isEditorPanelCollapsed(panelKey) {
+  return Boolean(state.editorCollapse[panelKey]);
+}
+
+function isBlockCollapsed(block) {
+  return Boolean(block?.editor_key && state.editorCollapse.blocks[block.editor_key]);
+}
+
+function isItemCollapsed(item) {
+  return Boolean(item?.editor_key && state.editorCollapse.items[item.editor_key]);
+}
+
+function setEditorPanelCollapsed(panelKey, collapsed) {
+  if (panelKey !== "issueMeta" && panelKey !== "fontScale") {
+    return;
+  }
+  state.editorCollapse[panelKey] = Boolean(collapsed);
+}
+
+function setBlockCollapsed(blockKey, collapsed) {
+  if (!blockKey) {
+    return;
+  }
+  state.editorCollapse.blocks[blockKey] = Boolean(collapsed);
+}
+
+function setItemCollapsed(itemKey, collapsed) {
+  if (!itemKey) {
+    return;
+  }
+  state.editorCollapse.items[itemKey] = Boolean(collapsed);
+}
+
+function setAllEditorSectionsCollapsed(collapsed) {
+  syncEditorCollapseState();
+  setEditorPanelCollapsed("issueMeta", collapsed);
+  setEditorPanelCollapsed("fontScale", collapsed);
+  Object.keys(state.editorCollapse.blocks).forEach((blockKey) => {
+    state.editorCollapse.blocks[blockKey] = Boolean(collapsed);
+  });
+  Object.keys(state.editorCollapse.items).forEach((itemKey) => {
+    state.editorCollapse.items[itemKey] = Boolean(collapsed);
+  });
+}
+
+function renderCollapseToggleButton(dataAttribute, value, collapsed, label) {
+  const actionLabel = collapsed ? "展開" : "折りたたむ";
   return `
-    <section class="item-card">
+    <button
+      class="ghost-button collapse-toggle"
+      type="button"
+      ${dataAttribute}="${escapeHtml(value)}"
+      aria-expanded="${collapsed ? "false" : "true"}"
+      aria-label="${escapeHtml(`${label}を${actionLabel}`)}"
+      title="${escapeHtml(`${label}を${actionLabel}`)}"
+    >${actionLabel}</button>
+  `;
+}
+
+function issueMetaCollapseSummary(issue = state.issue) {
+  const parts = [
+    compactText(issue?.title) || "タイトル未設定",
+    issue?.meeting_date ? issueSummaryLine(issue).replace(/^日時 /, "") : "",
+    compactText(issue?.place),
+  ];
+  return truncateText(parts.filter(Boolean).join(" / "), 88);
+}
+
+function paperFontScaleCollapseSummary() {
+  return `title ${state.paperFontScale.title}% / body ${state.paperFontScale.body}% / footer ${state.paperFontScale.footer}%`;
+}
+
+function blockCollapseSummary(block) {
+  const parts = [`${block.items.length}項目`, blockKindLabels[block.block_kind] || "大項目"];
+  return parts.join(" / ");
+}
+
+function itemTitleSummary(item) {
+  return truncateText(compactText(item.heading) || compactText(item.body) || "未入力の項目", 56);
+}
+
+function itemMetaSummary(item) {
+  const parts = [];
+  if (compactText(item.audience_label)) {
+    parts.push(compactText(item.audience_label));
+  }
+  if (item.due_date) {
+    parts.push(dateLabel(item.due_date));
+  }
+  if (item.attachments.length) {
+    parts.push(`資料${item.attachments.length}`);
+  }
+  if (item.supplements.length) {
+    parts.push(`補足${item.supplements.length}`);
+  }
+  return parts.join(" / ");
+}
+
+function renderEditorCollapseToolbar() {
+  return `
+    <section class="editor-fold-toolbar" aria-label="折りたたみツールバー">
+      <div class="editor-fold-toolbar__copy">
+        <strong>表示コントロール</strong>
+        <span>号の骨格・文字サイズ・大項目・小項目をまとめて切り替えます。</span>
+      </div>
+      <div class="editor-fold-toolbar__actions">
+        <button class="ghost-button" type="button" data-collapse-all="expand">全部展開</button>
+        <button class="ghost-button" type="button" data-collapse-all="collapse">全部折りたたみ</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderItemCard(block, blockIndex, item, itemIndex, readOnly = issueEditorReadOnly()) {
+  const collapsed = isItemCollapsed(item);
+  const itemIndexLabel = itemHasVisibleContent(item) ? itemMarker(itemIndex) : `${itemIndex + 1}.`;
+  const itemSummary = itemMetaSummary(item);
+  return `
+    <section class="item-card ${collapsed ? "is-collapsed" : ""}">
       <div class="item-toolbar">
-        <span class="item-index">${itemIndexLabel}</span>
+        <div class="item-toolbar-main">
+          <span class="item-index">${escapeHtml(itemIndexLabel)}</span>
+          <strong class="item-title">${escapeHtml(itemTitleSummary(item))}</strong>
+          <span class="collapse-summary ${collapsed ? "" : "is-muted"}">${escapeHtml(itemSummary || "項目見出し・本文・資料の有無をここで確認できます。")}</span>
+        </div>
         <div class="block-toolbar-actions">
+          ${renderCollapseToggleButton("data-toggle-item-collapse", item.editor_key, collapsed, itemTitleSummary(item))}
           <button class="ghost-button" type="button" data-move-item="${blockIndex}:${itemIndex}" data-direction="up" ${disabledAttr(readOnly || itemIndex === 0)}>上へ</button>
           <button class="ghost-button" type="button" data-move-item="${blockIndex}:${itemIndex}" data-direction="down" ${disabledAttr(readOnly || itemIndex === block.items.length - 1)}>下へ</button>
           <button class="ghost-button ghost-button--danger" type="button" data-remove-item="${blockIndex}:${itemIndex}" ${disabledAttr(readOnly)}>削除</button>
         </div>
       </div>
+      ${
+        collapsed
+          ? ""
+          : `
       <div class="form-grid form-grid--block">
         <div class="field field--wide">
           <label>項目見出し</label>
@@ -1259,6 +1482,8 @@ function renderItemCard(block, blockIndex, item, itemIndex, readOnly = issueEdit
         <label>資料</label>
         ${renderAttachmentList(item, blockIndex, itemIndex, readOnly)}
       </div>
+      `
+      }
     </section>
   `;
 }
@@ -1341,6 +1566,7 @@ function renderTemplateDocumentPreviewMarkup() {
 }
 
 function renderPaperFontScaleControls(disabled = false) {
+  const collapsed = isEditorPanelCollapsed("fontScale");
   const rows = PAPER_FONT_SCALE_ORDER.map((category) => {
     const value = state.paperFontScale[category];
     const atMin = value <= PAPER_FONT_SCALE_LIMITS.min;
@@ -1358,15 +1584,18 @@ function renderPaperFontScaleControls(disabled = false) {
   }).join("");
 
   return `
-    <section class="card">
-      <div class="card-header">
-        <div>
+    <section class="card card--collapsible ${collapsed ? "is-collapsed" : ""}">
+      <div class="card-header card-header--collapsible">
+        <div class="card-header-main">
           <h2 class="card-title">文字サイズ</h2>
-          <p class="card-copy">${escapeHtml(disabled ? "発行済みの案内では変更できません。下書き側でのみ調整してください。" : "紙面そのものの文字倍率です。現在の見た目を 80% 基準として扱い、このブラウザ全体で共有します。")}</p>
+          <p class="card-copy">${escapeHtml(collapsed ? paperFontScaleCollapseSummary() : disabled ? "発行済みの案内では変更できません。下書き側でのみ調整してください。" : "紙面そのものの文字倍率です。現在の見た目を 80% 基準として扱い、このブラウザ全体で共有します。")}</p>
         </div>
-        <button class="ghost-button" type="button" id="reset-paper-font-scale-button" ${disabledAttr(disabled)}>標準に戻す</button>
+        <div class="card-header-actions">
+          <button class="ghost-button" type="button" id="reset-paper-font-scale-button" ${disabledAttr(disabled)}>標準に戻す</button>
+          ${renderCollapseToggleButton("data-toggle-editor-panel", "fontScale", collapsed, "文字サイズ")}
+        </div>
       </div>
-      <div class="font-scale-grid">${rows}</div>
+      ${collapsed ? "" : `<div class="font-scale-grid">${rows}</div>`}
     </section>
   `;
 }
@@ -1754,21 +1983,34 @@ function renderEditor(skipPreview = false) {
     return;
   }
 
+  syncEditorCollapseState();
+
   const issue = state.issue;
   const editorReadOnly = issueEditorReadOnly(issue);
+  const issueMetaCollapsed = isEditorPanelCollapsed("issueMeta");
   const blockMarkup = state.blocks.length
     ? state.blocks
         .map(
-          (block, index) => `
-            <section class="block-card">
+          (block, index) => {
+            const collapsed = isBlockCollapsed(block);
+            return `
+            <section class="block-card ${collapsed ? "is-collapsed" : ""}">
               <div class="block-toolbar">
-                <span class="block-index">${index + 1}. ${escapeHtml(block.heading || blockKindLabels[block.block_kind] || "大項目")}</span>
+                <div class="block-toolbar-main">
+                  <span class="block-index">${index + 1}. ${escapeHtml(block.heading || blockKindLabels[block.block_kind] || "大項目")}</span>
+                  <span class="collapse-summary ${collapsed ? "" : "is-muted"}">${escapeHtml(blockCollapseSummary(block))}</span>
+                </div>
                 <div class="block-toolbar-actions">
+                  ${renderCollapseToggleButton("data-toggle-block-collapse", block.editor_key, collapsed, block.heading || blockKindLabels[block.block_kind] || "大項目")}
                   <button class="ghost-button" type="button" data-move-block="${index}" data-direction="up" ${disabledAttr(editorReadOnly || index === 0)}>上へ</button>
                   <button class="ghost-button" type="button" data-move-block="${index}" data-direction="down" ${disabledAttr(editorReadOnly || index === state.blocks.length - 1)}>下へ</button>
                   <button class="ghost-button ghost-button--danger" type="button" data-remove-block="${index}" ${disabledAttr(editorReadOnly)}>削除</button>
                 </div>
               </div>
+              ${
+                collapsed
+                  ? ""
+                  : `
               <div class="form-grid form-grid--block">
                 <div class="field">
                   <label>SECTION KIND</label>
@@ -1794,8 +2036,11 @@ function renderEditor(skipPreview = false) {
                   }
                 </div>
               </div>
+              `
+              }
             </section>
-          `,
+          `;
+          },
         )
         .join("")
     : `<div class="empty-state">まだ本文 section がありません。提出物や配布物の大項目を追加してください。</div>`;
@@ -1854,9 +2099,22 @@ function renderEditor(skipPreview = false) {
 
       <section class="workspace editor-layout">
         <div class="editor-column">
-          <section class="card">
-            <h2 class="card-title">号の骨格</h2>
-            <p class="card-copy">タイトル、日時、場所、注記。ここが紙面の印象を決めます。</p>
+          ${renderEditorCollapseToolbar()}
+
+          <section class="card card--collapsible ${issueMetaCollapsed ? "is-collapsed" : ""}">
+            <div class="card-header card-header--collapsible">
+              <div class="card-header-main">
+                <h2 class="card-title">号の骨格</h2>
+                <p class="card-copy">${escapeHtml(issueMetaCollapsed ? issueMetaCollapseSummary(issue) : "タイトル、日時、場所、注記。ここが紙面の印象を決めます。")}</p>
+              </div>
+              <div class="card-header-actions">
+                ${renderCollapseToggleButton("data-toggle-editor-panel", "issueMeta", issueMetaCollapsed, "号の骨格")}
+              </div>
+            </div>
+            ${
+              issueMetaCollapsed
+                ? ""
+                : `
             <div class="form-grid">
               <div class="issue-meta-row">
                 <div class="field">
@@ -1898,6 +2156,8 @@ function renderEditor(skipPreview = false) {
                 <p class="field-hint">最終ページだけに表示されます。右下の連絡先「平古場生産組合 / 組合長 古川 豊 / ☎090-7581-7819」は毎回自動で入ります。</p>
               </div>
             </div>
+            `
+            }
           </section>
 
           ${renderPaperFontScaleControls(editorReadOnly)}
@@ -2652,6 +2912,38 @@ function bindEditEvents() {
     });
   });
 
+  document.querySelectorAll("[data-collapse-all]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const collapseMode = button.getAttribute("data-collapse-all");
+      setAllEditorSectionsCollapsed(collapseMode === "collapse");
+      renderEditor(true);
+    });
+  });
+
+  document.querySelectorAll("[data-toggle-editor-panel]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const panelKey = button.getAttribute("data-toggle-editor-panel");
+      setEditorPanelCollapsed(panelKey, !isEditorPanelCollapsed(panelKey));
+      renderEditor(true);
+    });
+  });
+
+  document.querySelectorAll("[data-toggle-block-collapse]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const blockKey = button.getAttribute("data-toggle-block-collapse");
+      setBlockCollapsed(blockKey, !state.editorCollapse.blocks[blockKey]);
+      renderEditor(true);
+    });
+  });
+
+  document.querySelectorAll("[data-toggle-item-collapse]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const itemKey = button.getAttribute("data-toggle-item-collapse");
+      setItemCollapsed(itemKey, !state.editorCollapse.items[itemKey]);
+      renderEditor(true);
+    });
+  });
+
   if (issueEditorReadOnly()) {
     return;
   }
@@ -2877,10 +3169,8 @@ function bindEditEvents() {
         const documentPayload = await api(`/api/attachments/${attachmentId}`, {
           method: "DELETE",
         });
-        state.issue = normalizeIssue(documentPayload.issue);
-        state.blocks = documentPayload.blocks.map(normalizeBlock);
+        applyIssueDocumentPayload(documentPayload);
         state.notice = "資料を削除しました。";
-        ensureSelectedAttachment();
       } catch (error) {
         if (await syncIssueAfterReadonlyConflict(error)) {
           renderEditor();
@@ -3149,10 +3439,7 @@ async function loadIndex() {
 
 async function loadIssueDocument() {
   const documentPayload = await api(`/api/issues/${boot.issueId}`);
-  state.issue = normalizeIssue(documentPayload.issue);
-  state.issueNavigation = normalizeIssueNavigation(documentPayload.navigation);
-  state.blocks = documentPayload.blocks.map(normalizeBlock);
-  ensureSelectedAttachment();
+  applyIssueDocumentPayload(documentPayload);
 }
 
 async function loadTemplateDocument() {
@@ -3257,10 +3544,7 @@ async function saveEditor() {
       method: "PUT",
       body: payloadFromState(),
     });
-    state.issue = normalizeIssue(documentPayload.issue);
-    state.issueNavigation = normalizeIssueNavigation(documentPayload.navigation);
-    state.blocks = documentPayload.blocks.map(normalizeBlock);
-    ensureSelectedAttachment();
+    applyIssueDocumentPayload(documentPayload);
     state.dirty = false;
     state.notice = "保存しました。";
     return true;
@@ -3300,10 +3584,7 @@ async function publishIssueFromEditor() {
     const documentPayload = await api(`/api/issues/${boot.issueId}/publish`, {
       method: "POST",
     });
-    state.issue = normalizeIssue(documentPayload.issue);
-    state.issueNavigation = normalizeIssueNavigation(documentPayload.navigation);
-    state.blocks = documentPayload.blocks.map(normalizeBlock);
-    ensureSelectedAttachment();
+    applyIssueDocumentPayload(documentPayload);
     state.dirty = false;
     state.notice = "案内を発行しました。以後の修正は複製して新しい下書きで行ってください。";
     return true;

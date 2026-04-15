@@ -483,3 +483,16 @@
 - 2026-04-15 23:23:16 +0900 [context更新] AGENTS.md と context/repo-map.md に『右脇の赤ラベルはサムネ毎でなく item 毎に1回だけ表示』の紙面ルールを追記。
 - 2026-04-15 23:24:04 +0900 [メモ修正] WORK_TIMELINE.md の壊れた原因特定行を、notice-pdf.js とラベル名が欠けない表記へ修正。
 - 2026-04-15 23:24:37 +0900 [コミット] 右脇ラベルの item 単位表示修正と codified context 追随を fix: 右脇の配布物ラベルを項目単位にそろえる でコミット。
+- 2026-04-15 23:26:28 +0900 [start] block-card/item-card/号の骨格/文字サイズの個別折りたたみと一括操作バー追加の依頼を受領。build-error.txt と test-error.txt を確認し、現時点で Rust 側エラーなしを確認。
+- 2026-04-15 23:27:19 +0900 [調査] `web-src/main.js` と `web-src/app.css` を確認し、折りたたみ対象は `renderEditor()` 内の `block-card` / `号の骨格` / `文字サイズ`、および `renderItemCard()` 内の `item-card` と判断。状態管理とツールバー差し込み位置の調査を継続。
+- 2026-04-15 23:28:21 +0900 [設計] editor は `renderEditor()` 再描画型のため、折りたたみ状態は保存データに混ぜず `state` の UI 状態として持ち、`bindEditEvents()` でトグル・一括操作を束ねる方針が最小変更と判断。
+- 2026-04-15 23:34:06 +0900 [実装] `web-src/main.js` に editor 専用の折りたたみ状態、個別トグル、一括展開/折りたたみツールバー、block/item 見出し要約表示を追加。保存データには混ぜず UI 状態として分離した。
+- 2026-04-15 23:34:11 +0900 [実装] `web-src/app.css` に sticky な表示コントロール帯と、折りたたみ時の header / summary / responsive 挙動を追加して、タイトル確認と一括操作の視認性を確保。
+- 2026-04-15 23:35:37 +0900 [確認] 変更保存後に 1 秒待機して `build-error.txt` / `test-error.txt` / `clippy-error.txt` を再確認。失敗は出ておらず、`build-error-win.txt` は未作成だった。
+- 2026-04-15 23:35:45 +0900 [build] `npm run build` を実行し、`web-dist/app.css` と `web-dist/app.js` を更新。Vite の chunk size 警告は継続だが build 自体は成功。
+- 2026-04-15 23:37:10 +0900 [検証] ブラウザで editor を確認し、`全部折りたたみ` で `号の骨格` / `文字サイズ` / block 群が畳まれること、展開した block 内で item を個別に再展開できることを確認。
+- 2026-04-15 23:40:09 +0900 [codified-context] implementation-followup として inspect/routing audit を実行。折りたたみUIは durable な editor 操作ルールのため `AGENTS.md` と `context/repo-map.md` の追随候補と判断。
+- 2026-04-15 23:41:09 +0900 [codified-context] 保守提案を確定。新規 asset は作らず、`AGENTS.md` と `context/repo-map.md` へ折りたたみUIと routing の追記だけを auto-apply する方針に決定。
+- 2026-04-15 23:42:17 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` に editor 折りたたみUI、一括操作バー、UI-only state、routing 注意点を追記。
+- 2026-04-15 23:42:52 +0900 [codified-context] エラーファイル再確認後、git-commit skill を読んで今回の UI 実装差分と codified context 更新を同一トピックでまとめる段階へ移行。
+- 2026-04-15 23:44:23 +0900 [git] 指定パスの git-commit skill が見つからなかったため、利用可能 skill 一覧に載っていた `/home/fuse/.agents/skills/git-commit/SKILL.md` を正本として参照する方針へ切替。

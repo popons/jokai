@@ -326,6 +326,32 @@ button {
   align-items: center;
 }
 
+.card-header--collapsible {
+  align-items: flex-start;
+}
+
+.card-header-main,
+.card-header-actions,
+.block-toolbar-main,
+.item-toolbar-main {
+  min-width: 0;
+}
+
+.card-header-main,
+.block-toolbar-main,
+.item-toolbar-main {
+  display: grid;
+  gap: 3px;
+}
+
+.card-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .issue-card-title {
   margin: 0 0 4px;
   font-size: 1.08rem;
@@ -650,6 +676,7 @@ button {
 .editor-column {
   display: grid;
   gap: 8px;
+  align-content: start;
 }
 
 .editor-actions {
@@ -738,6 +765,68 @@ button {
   font-weight: 600;
 }
 
+.editor-fold-toolbar {
+  position: sticky;
+  top: 10px;
+  z-index: 12;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(91, 124, 240, 0.18);
+  background: linear-gradient(180deg, rgba(253, 254, 255, 0.96), rgba(240, 246, 255, 0.94));
+  box-shadow: 0 14px 30px rgba(49, 74, 139, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+.editor-fold-toolbar__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.editor-fold-toolbar__copy strong {
+  font-size: 0.94rem;
+  letter-spacing: 0.02em;
+}
+
+.editor-fold-toolbar__copy span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.editor-fold-toolbar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.card--collapsible.is-collapsed,
+.block-card.is-collapsed,
+.item-card.is-collapsed {
+  padding-bottom: 10px;
+}
+
+.collapse-toggle {
+  white-space: nowrap;
+}
+
+.collapse-summary {
+  color: var(--accent-deep);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.collapse-summary.is-muted {
+  color: var(--muted);
+}
+
 .block-card {
   padding: 10px 10px 12px;
   border-radius: 14px;
@@ -794,6 +883,10 @@ button {
   margin-bottom: 8px;
 }
 
+.block-toolbar-main {
+  flex: 1;
+}
+
 .block-items,
 .item-stack {
   display: grid;
@@ -815,6 +908,14 @@ button {
   background: rgba(255, 255, 255, 0.96);
 }
 
+.item-toolbar {
+  align-items: flex-start;
+}
+
+.item-toolbar-main {
+  flex: 1;
+}
+
 .field-header,
 .supplement-toolbar {
   display: flex;
@@ -826,6 +927,12 @@ button {
 .item-index {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.item-title {
+  font-size: 0.98rem;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .block-index {
@@ -1584,6 +1691,16 @@ button {
     justify-content: flex-start;
   }
 
+  .editor-fold-toolbar {
+    position: static;
+    align-items: flex-start;
+  }
+
+  .editor-fold-toolbar__actions,
+  .card-header-actions {
+    justify-content: flex-start;
+  }
+
   .attachment-input-grid {
     grid-template-columns: 1fr;
   }
@@ -1609,6 +1726,24 @@ button {
 
   .issue-thumb-edit {
     width: 100%;
+  }
+
+  .card-header,
+  .item-list-header,
+  .item-toolbar,
+  .block-toolbar,
+  .supplement-toolbar,
+  .field-header,
+  .editor-fold-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .block-toolbar-actions,
+  .editor-fold-toolbar__actions,
+  .card-header-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 
