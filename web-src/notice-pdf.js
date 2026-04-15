@@ -1179,12 +1179,11 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography, is
     );
   }
 
-  assets.forEach((asset, assetIndex) => {
-    const itemTop = rowTop + assetIndex * (THUMB_SLOT_HEIGHT_MM + THUMB_SLOT_GAP_MM);
+  if (assets.length) {
     pushTextSchema(page, {
       name: `thumb-label-${page.length}`,
       x: THUMB_LABEL_X,
-      y: itemTop + 0.3,
+      y: rowTop + 0.3,
       width: THUMB_LABEL_WIDTH_MM,
       height: 11,
       content: `【${labelForBlockKind(block.block_kind, issue)}】\n対象者:${normalizeText(item.audience_label) || "全員"}`,
@@ -1193,7 +1192,7 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography, is
       lineHeight: typography.body.lineHeight.sideLabel,
       fontColor: COLOR_RED,
     });
-  });
+  }
 
   return rowHeight;
 }

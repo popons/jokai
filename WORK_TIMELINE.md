@@ -474,3 +474,11 @@
 - 2026-04-15 23:00:28 +0900 [調査] `db/001_init.sql` と `db/002_block_items.sql` で `blocks(issue_id, sort_order)` / `block_items(block_id, sort_order)` が unique になっていることを確認。`web-src/main.js` の `data-move-block` はローカル state 並べ替えのみで直接保存しない一方、`src/main.rs` の `api_issue_save()` は既存 row を順番どおりに即 `sort_order` 更新しており、入れ替え時の一時重複で unique violation を起こす疑いが強まった。
 - 2026-04-15 23:01:58 +0900 [実装] `src/main.rs` の `api_issue_save()` で、block と item の既存 `sort_order` を保存前に一旦負値へ退避してから最終順を再割当するよう変更。`unique(issue_id, sort_order)` / `unique(block_id, sort_order)` と衝突しない 2 段階更新へ寄せた。
 - 2026-04-15 23:03:14 +0900 [検証] `cargo fmt` 後に 1 秒待機し、`build-error.txt` / `test-error.txt` / `clippy-error.txt` の成功と `build-error-win.txt` 未作成を確認。Chrome で同 issue の `下へ → 保存` を再実行して `PUT /api/issues/...` が `500` から `200` に変わることを確認し、検証で変えた block 順も元の `配布物 → 提出物 → 案内事項` に戻して保存した。
+- 2026-04-15 23:16:19 +0900 [調査開始] ユーザー要望『サムネ毎ではなく1項目につき1回だけ【配布物】表示』の実装調査を開始。jokai-pdfme-layout skill を適用。
+- 2026-04-15 23:16:50 +0900 [原因特定] web-src/notice-pdf.js の addItemRow() で assets.forEach ごとに 【配布物】/【提出物】 ラベルを描画しており、サムネ枚数分だけ重複表示される実装を確認。
+- 2026-04-15 23:17:17 +0900 [修正] web-src/notice-pdf.js のサムネラベル描画を asset 単位から item 単位へ変更し、1項目につき1回だけ 【配布物】/【提出物】 を表示するよう修正。
+- 2026-04-15 23:18:27 +0900 [確認] localhost 編集画面のA4プレビューで、3月度配布物の1項目目はサムネ2枚でも 【配布物】 が1回だけ表示されることを確認。別 item の提出物ラベルは各項目ごとに維持。
+- 2026-04-15 23:22:15 +0900 [保守開始] codified-context-maintenance に従い、差分監査と codified context 追随要否の点検を開始。
+- 2026-04-15 23:22:27 +0900 [監査] inspect_codified_context_changes と routing audit で、notice-pdf の変更に対する context/AGENTS 追随不足を確認。今回の『ラベルはサムネ毎でなく item 毎に1回』は durable な紙面ルールと判断。
+- 2026-04-15 23:23:16 +0900 [context更新] AGENTS.md と context/repo-map.md に『右脇の赤ラベルはサムネ毎でなく item 毎に1回だけ表示』の紙面ルールを追記。
+- 2026-04-15 23:24:04 +0900 [メモ修正] WORK_TIMELINE.md の壊れた原因特定行を、notice-pdf.js とラベル名が欠けない表記へ修正。
