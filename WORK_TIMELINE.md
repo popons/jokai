@@ -482,3 +482,4 @@
 - 2026-04-15 23:22:27 +0900 [監査] inspect_codified_context_changes と routing audit で、notice-pdf の変更に対する context/AGENTS 追随不足を確認。今回の『ラベルはサムネ毎でなく item 毎に1回』は durable な紙面ルールと判断。
 - 2026-04-15 23:23:16 +0900 [context更新] AGENTS.md と context/repo-map.md に『右脇の赤ラベルはサムネ毎でなく item 毎に1回だけ表示』の紙面ルールを追記。
 - 2026-04-15 23:24:04 +0900 [メモ修正] WORK_TIMELINE.md の壊れた原因特定行を、notice-pdf.js とラベル名が欠けない表記へ修正。
+- 2026-04-15 23:24:37 +0900 [コミット] 右脇ラベルの item 単位表示修正と codified context 追随を fix: 右脇の配布物ラベルを項目単位にそろえる でコミット。
