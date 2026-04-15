@@ -49,7 +49,7 @@ const FRONTEND_APP_JS: &str = "app.js";
 const FRONTEND_FONT_BODY: &str = "body.ttf";
 const FRONTEND_FONT_BODY_BOLD: &str = "body-bold.ttf";
 const FRONTEND_FONT_TITLE: &str = "title.ttf";
-const CURRENT_LAYOUT_VERSION: &str = "notice-pdf-layout-v3";
+const CURRENT_LAYOUT_VERSION: &str = "notice-pdf-layout-v4";
 const CURRENT_FONT_VERSION: &str = "noto-sans-jp-static-v2";
 const CURRENT_RENDERER_VERSION: &str = "pdfme-raster-v4";
 const FAMILY_TAB_ISSUES: &str = "issues";
@@ -3854,6 +3854,18 @@ async fn api_issue_save(
     .collect::<BTreeSet<_>>();
   let mut retained_block_ids = BTreeSet::new();
 
+  // Avoid transient unique(issue_id, sort_order) conflicts while reordering existing rows.
+  state
+    .client
+    .execute(
+      "update blocks
+       set sort_order = -(sort_order + 1)
+       where issue_id::text = $1",
+      &[&issue_id],
+    )
+    .await
+    .map_err(|err| api_internal(err.to_string()))?;
+
   for (index, block) in payload.blocks.iter().enumerate() {
     let sort_order = index as i32 + 1;
     let heading = block.heading.trim().to_string();
@@ -3972,6 +3984,18 @@ async fn api_issue_save(
       .map(|row| row.get::<_, String>(0))
       .collect::<BTreeSet<_>>();
     let mut retained_item_ids = BTreeSet::new();
+
+    // Avoid transient unique(block_id, sort_order) conflicts while reordering existing rows.
+    state
+      .client
+      .execute(
+        "update block_items
+         set sort_order = -(sort_order + 1)
+         where block_id::text = $1",
+        &[&resolved_block_id],
+      )
+      .await
+      .map_err(|err| api_internal(err.to_string()))?;
 
     for (item_index, item) in block.items.iter().enumerate() {
       let item_sort_order = item_index as i32 + 1;

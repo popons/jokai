@@ -11,7 +11,7 @@ const TITLE_FONT_FAMILY = '"Yu Gothic", "Hiragino Sans", sans-serif';
 const BODY_FONT_NAME = "JokaiBody";
 const BODY_BOLD_FONT_NAME = "JokaiBodyBold";
 const TITLE_FONT_NAME = "JokaiTitle";
-export const NOTICE_RENDER_VERSION = "notice-pdf-layout-v3|noto-sans-jp-static-v2|pdfme-raster-v3";
+export const NOTICE_RENDER_VERSION = "notice-pdf-layout-v4|noto-sans-jp-static-v2|pdfme-raster-v3";
 const DEFAULT_AGENDA_LABEL = "常会事項";
 const ITEM_META_LAYOUT_STACKED = "stacked";
 const ITEM_META_LAYOUT_SAME_LINE = "same_line";
@@ -38,6 +38,10 @@ const FOOTER_NOTE_LINE_HEIGHT = 1.22;
 const FOOTER_CONTACT_FONT_SIZE = 8.6;
 const FOOTER_CONTACT_LINE_HEIGHT = 1.22;
 const CONTINUATION_MARKER_BOTTOM_GAP_MM = 0.6;
+const HEADER_TITLE_X = 12;
+const HEADER_TITLE_Y = 10;
+// Intentionally wider than the visible page so long notice titles do not auto-wrap.
+const HEADER_TITLE_SINGLE_LINE_WIDTH_MM = 400;
 export const ITEM_THUMBNAIL_SCALE_DEFAULT_PERCENT = 100;
 export const ITEM_THUMBNAIL_SCALE_LIMITS = Object.freeze({
   min: 80,
@@ -792,20 +796,15 @@ function addFirstPageHeader(page, issue, typography) {
   const title = normalizeText(issue.title) || "平古場生産組合　常会の案内";
   const noteText = normalizeText(issue.header_note);
   const isNoMeeting = issue.issue_type === "no_meeting";
-  const titleBlock = wrapText(title, {
-    widthMm: 138,
-    fontSizePt: typography.title.primary,
-    lineHeight: typography.title.lineHeight,
-    fontFamily: TITLE_FONT_FAMILY,
-  });
+  const titleHeight = textBlockHeightMm(typography.title.primary, typography.title.lineHeight, 1);
   pushTextSchema(
     page,
     {
       name: `title-${page.length}`,
-      x: 12,
-      y: 10,
-      width: 138,
-      height: Math.max(titleBlock.heightMm + 0.8, 12),
+      x: HEADER_TITLE_X,
+      y: HEADER_TITLE_Y,
+      width: HEADER_TITLE_SINGLE_LINE_WIDTH_MM,
+      height: Math.max(titleHeight + 0.8, 12),
       content: title,
       fontName: TITLE_FONT_NAME,
       fontSize: typography.title.primary,
@@ -813,7 +812,7 @@ function addFirstPageHeader(page, issue, typography) {
     },
     { halo: true },
   );
-  let cursorY = 10 + Math.max(titleBlock.heightMm + 2.6, 14);
+  let cursorY = HEADER_TITLE_Y + Math.max(titleHeight + 2.6, 14);
   if (!isNoMeeting) {
     const meetingHeight = textBlockHeightMm(typography.header.meeting, typography.header.lineHeight.meeting, 1);
     pushTextSchema(
@@ -906,20 +905,15 @@ function addFirstPageHeader(page, issue, typography) {
 
 function addContinuationHeader(page, issue, pageNumber, typography) {
   const content = `${normalizeText(issue.title) || "常会案内"}（続き ${pageNumber}頁）`;
-  const titleBlock = wrapText(content, {
-    widthMm: 140,
-    fontSizePt: typography.title.continuation,
-    lineHeight: typography.title.lineHeight,
-    fontFamily: TITLE_FONT_FAMILY,
-  });
+  const titleHeight = textBlockHeightMm(typography.title.continuation, typography.title.lineHeight, 1);
   pushTextSchema(
     page,
     {
       name: `continuation-title-${page.length}`,
-      x: 12,
-      y: 10,
-      width: 140,
-      height: Math.max(titleBlock.heightMm + 0.8, 9),
+      x: HEADER_TITLE_X,
+      y: HEADER_TITLE_Y,
+      width: HEADER_TITLE_SINGLE_LINE_WIDTH_MM,
+      height: Math.max(titleHeight + 0.8, 9),
       content,
       fontName: TITLE_FONT_NAME,
       fontSize: typography.title.continuation,
@@ -927,7 +921,7 @@ function addContinuationHeader(page, issue, pageNumber, typography) {
     },
     { halo: true },
   );
-  return 10 + Math.max(titleBlock.heightMm + 3.2, 14);
+  return HEADER_TITLE_Y + Math.max(titleHeight + 3.2, 14);
 }
 
 function itemMarker(index) {
