@@ -74,6 +74,7 @@ const paperFontScaleLabels = {
   body: "body",
   footer: "footer",
 };
+const DEFAULT_BLOCK_SHOW_ITEM_MARKERS = true;
 const itemMetaLayoutLabels = {
   stacked: "別行",
   same_line: "同じ行",
@@ -83,6 +84,7 @@ const itemSupplementToneLabels = {
   blue: "青",
 };
 const paperFontScaleStorageKey = "jokai.paper-font-scale.v1";
+const issueBlockDisplayPrefStorageKeyPrefix = "jokai.issue-block-display-pref.v1";
 const issueListModeStorageKey = "jokai.issue-list-mode.v1";
 
 let editorNodeSequence = 0;
@@ -141,6 +143,85 @@ function persistIssueListMode() {
   }
 }
 
+function invalidateNoticePreviewBytes() {
+  if (state.templateDocument) {
+    return;
+  }
+  state.previewBytes = null;
+}
+
+function normalizeBlockShowItemMarkers(value) {
+  return value !== false;
+}
+
+function blockDisplayPrefKey(block, fallback = "") {
+  return String(block?.id || block?.editor_key || fallback || "").trim();
+}
+
+function normalizeIssueBlockDisplayPrefs(value = {}) {
+  const normalized = Object.create(null);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return normalized;
+  }
+  Object.entries(value).forEach(([key, markerVisible]) => {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      return;
+    }
+    normalized[normalizedKey] = normalizeBlockShowItemMarkers(markerVisible);
+  });
+  return normalized;
+}
+
+function issueBlockDisplayPrefStorageKey(issueId = state.issue?.id || boot.issueId) {
+  const normalizedIssueId = String(issueId || "").trim();
+  return normalizedIssueId ? `${issueBlockDisplayPrefStorageKeyPrefix}:${normalizedIssueId}` : "";
+}
+
+function loadIssueBlockDisplayPrefs(issueId = state.issue?.id || boot.issueId) {
+  const storageKey = issueBlockDisplayPrefStorageKey(issueId);
+  if (!storageKey) {
+    return Object.create(null);
+  }
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return Object.create(null);
+    }
+    return normalizeIssueBlockDisplayPrefs(JSON.parse(raw));
+  } catch {
+    return Object.create(null);
+  }
+}
+
+function persistIssueBlockDisplayPrefs(displayPrefs = Object.create(null), issueId = state.issue?.id || boot.issueId) {
+  const storageKey = issueBlockDisplayPrefStorageKey(issueId);
+  if (!storageKey) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(normalizeIssueBlockDisplayPrefs(displayPrefs)));
+  } catch {
+    // Ignore localStorage failures and keep the in-memory value.
+  }
+}
+
+function blockItemMarkersVisible(block) {
+  return normalizeBlockShowItemMarkers(block?.show_item_markers);
+}
+
+function currentIssueBlockDisplayPrefs(blocks = state.blocks) {
+  const displayPrefs = Object.create(null);
+  blocks.forEach((block, index) => {
+    const key = blockDisplayPrefKey(block, `index:${index}`);
+    if (!key) {
+      return;
+    }
+    displayPrefs[key] = blockItemMarkersVisible(block);
+  });
+  return displayPrefs;
+}
+
 function loadPaperFontScale() {
   try {
     const raw = window.localStorage.getItem(paperFontScaleStorageKey);
@@ -167,6 +248,7 @@ function updatePaperFontScale(partial = {}) {
     ...partial,
   });
   persistPaperFontScale();
+  invalidateNoticePreviewBytes();
 }
 
 function adjustPaperFontScale(category, delta) {
@@ -179,12 +261,13 @@ function adjustPaperFontScale(category, delta) {
 function resetPaperFontScale() {
   state.paperFontScale = { ...PAPER_FONT_SCALE_DEFAULTS };
   persistPaperFontScale();
+  invalidateNoticePreviewBytes();
 }
 
 function createEditorCollapseState() {
   return {
-    issueMeta: false,
-    fontScale: false,
+    issueMeta: true,
+    fontScale: true,
     blocks: Object.create(null),
     items: Object.create(null),
   };
@@ -442,12 +525,14 @@ function normalizeBlock(block = {}) {
     editor_key: block.editor_key || nextEditorNodeKey("block"),
     block_kind: block.block_kind || "freeform",
     heading: block.heading || "",
+    show_item_markers: normalizeBlockShowItemMarkers(block.show_item_markers),
     sort_order: block.sort_order || 0,
     items: Array.isArray(block.items) ? block.items.map(normalizeItem) : [],
   };
 }
 
-function normalizeBlocks(blocks = [], previousBlocks = []) {
+function normalizeBlocks(blocks = [], previousBlocks = [], issueId = state.issue?.id || boot.issueId) {
+  const persistedDisplayPrefs = loadIssueBlockDisplayPrefs(issueId);
   const previousBlocksById = new Map();
   previousBlocks.forEach((block) => {
     if (block?.id) {
@@ -457,6 +542,15 @@ function normalizeBlocks(blocks = [], previousBlocks = []) {
 
   return (Array.isArray(blocks) ? blocks : []).map((block, blockIndex) => {
     const previousBlock = (block?.id && previousBlocksById.get(block.id)) || previousBlocks[blockIndex] || null;
+    const blockEditorKey = block?.editor_key || previousBlock?.editor_key || nextEditorNodeKey("block");
+    const blockDisplayKey = blockDisplayPrefKey(
+      { id: block?.id || previousBlock?.id || "", editor_key: blockEditorKey },
+      `index:${blockIndex}`,
+    );
+    const persistedShowItemMarkers =
+      blockDisplayKey && Object.prototype.hasOwnProperty.call(persistedDisplayPrefs, blockDisplayKey)
+        ? persistedDisplayPrefs[blockDisplayKey]
+        : undefined;
     const previousItems = previousBlock?.items || [];
     const previousItemsById = new Map();
     previousItems.forEach((item) => {
@@ -467,7 +561,11 @@ function normalizeBlocks(blocks = [], previousBlocks = []) {
 
     const normalized = normalizeBlock({
       ...block,
-      editor_key: block?.editor_key || previousBlock?.editor_key || nextEditorNodeKey("block"),
+      editor_key: blockEditorKey,
+      show_item_markers:
+        Object.prototype.hasOwnProperty.call(block || {}, "show_item_markers")
+          ? block.show_item_markers
+          : previousBlock?.show_item_markers ?? persistedShowItemMarkers ?? DEFAULT_BLOCK_SHOW_ITEM_MARKERS,
       items: (Array.isArray(block?.items) ? block.items : []).map((item, itemIndex) => {
         const previousItem =
           (item?.id && previousItemsById.get(item.id)) || previousItems[itemIndex] || null;
@@ -652,7 +750,8 @@ async function syncIssueAfterReadonlyConflict(
 function applyIssueDocumentPayload(documentPayload) {
   state.issue = normalizeIssue(documentPayload.issue);
   state.issueNavigation = normalizeIssueNavigation(documentPayload.navigation);
-  state.blocks = normalizeBlocks(documentPayload.blocks, state.blocks);
+  state.blocks = normalizeBlocks(documentPayload.blocks, state.blocks, state.issue.id);
+  persistIssueBlockDisplayPrefs(currentIssueBlockDisplayPrefs(), state.issue.id);
   ensureSelectedAttachment();
 }
 
@@ -1291,13 +1390,17 @@ function syncEditorCollapseState() {
     if (!block.editor_key) {
       block.editor_key = nextEditorNodeKey("block");
     }
-    nextBlocks[block.editor_key] = Boolean(state.editorCollapse.blocks[block.editor_key]);
+    nextBlocks[block.editor_key] = Object.prototype.hasOwnProperty.call(state.editorCollapse.blocks, block.editor_key)
+      ? Boolean(state.editorCollapse.blocks[block.editor_key])
+      : true;
 
     block.items.forEach((item) => {
       if (!item.editor_key) {
         item.editor_key = nextEditorNodeKey("item");
       }
-      nextItems[item.editor_key] = Boolean(state.editorCollapse.items[item.editor_key]);
+      nextItems[item.editor_key] = Object.prototype.hasOwnProperty.call(state.editorCollapse.items, item.editor_key)
+        ? Boolean(state.editorCollapse.items[item.editor_key])
+        : true;
     });
   });
 
@@ -1382,7 +1485,11 @@ function paperFontScaleCollapseSummary() {
 }
 
 function blockCollapseSummary(block) {
-  const parts = [`${block.items.length}項目`, blockKindLabels[block.block_kind] || "大項目"];
+  const parts = [
+    `${block.items.length}項目`,
+    blockKindLabels[block.block_kind] || "大項目",
+    `番号${blockItemMarkersVisible(block) ? "表示" : "非表示"}`,
+  ];
   return parts.join(" / ");
 }
 
@@ -1424,13 +1531,14 @@ function renderEditorCollapseToolbar() {
 
 function renderItemCard(block, blockIndex, item, itemIndex, readOnly = issueEditorReadOnly()) {
   const collapsed = isItemCollapsed(item);
-  const itemIndexLabel = itemHasVisibleContent(item) ? itemMarker(itemIndex) : `${itemIndex + 1}.`;
+  const itemIndexLabel =
+    blockItemMarkersVisible(block) && itemHasVisibleContent(item) ? itemMarker(itemIndex) : "";
   const itemSummary = itemMetaSummary(item);
   return `
     <section class="item-card ${collapsed ? "is-collapsed" : ""}">
       <div class="item-toolbar">
         <div class="item-toolbar-main">
-          <span class="item-index">${escapeHtml(itemIndexLabel)}</span>
+          ${itemIndexLabel ? `<span class="item-index">${escapeHtml(itemIndexLabel)}</span>` : ""}
           <strong class="item-title">${escapeHtml(itemTitleSummary(item))}</strong>
           <span class="collapse-summary ${collapsed ? "" : "is-muted"}">${escapeHtml(itemSummary || "項目見出し・本文・資料の有無をここで確認できます。")}</span>
         </div>
@@ -1613,6 +1721,51 @@ function renderPreviewPagesMarkup(altPrefix = "PDFプレビュー") {
       `,
     )
     .join("");
+}
+
+function buildNoticeRenderOptions(blocks = state.blocks) {
+  const blockShowItemMarkers = Object.create(null);
+  blocks.forEach((block, index) => {
+    const key = blockDisplayPrefKey(block, `index:${index}`);
+    if (!key) {
+      return;
+    }
+    blockShowItemMarkers[key] = blockItemMarkersVisible(block);
+  });
+  return { blockShowItemMarkers };
+}
+
+function buildNoticeBlockDisplayCacheKey(blocks = state.blocks) {
+  return blocks
+    .map((block, index) => {
+      const key = blockDisplayPrefKey(block, `index:${index}`);
+      return `${key}:${blockItemMarkersVisible(block) ? "on" : "off"}`;
+    })
+    .join(",");
+}
+
+function updateBlockItemMarkerVisibility(blockIndex, markerVisible) {
+  const block = state.blocks[blockIndex];
+  if (!block) {
+    return;
+  }
+  block.show_item_markers = normalizeBlockShowItemMarkers(markerVisible);
+  persistIssueBlockDisplayPrefs(currentIssueBlockDisplayPrefs());
+  invalidateNoticePreviewBytes();
+}
+
+function applyIssueBlockDisplayPrefsToCurrentBlocks(issueId = state.issue?.id || boot.issueId) {
+  const displayPrefs = loadIssueBlockDisplayPrefs(issueId);
+  state.blocks = state.blocks.map((block, index) => {
+    const key = blockDisplayPrefKey(block, `index:${index}`);
+    if (!key || !Object.prototype.hasOwnProperty.call(displayPrefs, key)) {
+      return block;
+    }
+    return {
+      ...block,
+      show_item_markers: normalizeBlockShowItemMarkers(displayPrefs[key]),
+    };
+  });
 }
 
 function renderIssueCards() {
@@ -1993,6 +2146,10 @@ function renderEditor(skipPreview = false) {
         .map(
           (block, index) => {
             const collapsed = isBlockCollapsed(block);
+            const markerVisibilityLabel = blockItemMarkersVisible(block) ? "表示" : "非表示";
+            const markerToggleAriaLabel = blockItemMarkersVisible(block)
+              ? "この大項目の小項目番号を非表示にする"
+              : "この大項目の小項目番号を表示する";
             return `
             <section class="block-card ${collapsed ? "is-collapsed" : ""}">
               <div class="block-toolbar">
@@ -2001,6 +2158,7 @@ function renderEditor(skipPreview = false) {
                   <span class="collapse-summary ${collapsed ? "" : "is-muted"}">${escapeHtml(blockCollapseSummary(block))}</span>
                 </div>
                 <div class="block-toolbar-actions">
+                  <button class="ghost-button" type="button" data-toggle-block-item-markers="${index}" aria-label="${escapeHtml(markerToggleAriaLabel)}" title="${escapeHtml(markerToggleAriaLabel)}">小項目番号:${escapeHtml(markerVisibilityLabel)}</button>
                   ${renderCollapseToggleButton("data-toggle-block-collapse", block.editor_key, collapsed, block.heading || blockKindLabels[block.block_kind] || "大項目")}
                   <button class="ghost-button" type="button" data-move-block="${index}" data-direction="up" ${disabledAttr(editorReadOnly || index === 0)}>上へ</button>
                   <button class="ghost-button" type="button" data-move-block="${index}" data-direction="down" ${disabledAttr(editorReadOnly || index === state.blocks.length - 1)}>下へ</button>
@@ -2542,7 +2700,7 @@ async function rasterizePreview(bytes, { useIssuePreviewCache = true, expectedPa
   formData.append("file", new Blob([bytes], { type: "application/pdf" }), "preview.pdf");
   if (!state.dirty && state.issue?.id) {
     formData.append("cache_issue_id", state.issue.id);
-    formData.append("cache_font_scale_key", currentIssuePreviewFontScaleCacheKey());
+    formData.append("cache_font_scale_key", currentIssuePreviewCacheKey());
     if (!useIssuePreviewCache) {
       formData.append("cache_bypass", "1");
     }
@@ -2556,12 +2714,13 @@ async function rasterizePreview(bytes, { useIssuePreviewCache = true, expectedPa
   });
 }
 
-function currentIssuePreviewFontScaleCacheKey(fontScale = state.paperFontScale) {
+function currentIssuePreviewCacheKey(fontScale = state.paperFontScale, blocks = state.blocks) {
   const normalized = normalizePaperFontScale(fontScale);
   const fontScaleKey = PAPER_FONT_SCALE_ORDER
     .map((category) => `${category}:${normalized[category]}`)
     .join("|");
-  return `${NOTICE_RENDER_VERSION}|${fontScaleKey}`;
+  const displayKey = `item_markers:${buildNoticeBlockDisplayCacheKey(blocks)}`;
+  return `${NOTICE_RENDER_VERSION}|${fontScaleKey}|${displayKey}`;
 }
 
 async function fetchCachedIssuePreviewImages(issueId = state.issue?.id || boot.issueId) {
@@ -2569,7 +2728,7 @@ async function fetchCachedIssuePreviewImages(issueId = state.issue?.id || boot.i
     return { images: [] };
   }
   return api(
-    `/api/issues/${encodeURIComponent(issueId)}/preview-cache?font_scale_key=${encodeURIComponent(currentIssuePreviewFontScaleCacheKey())}`,
+    `/api/issues/${encodeURIComponent(issueId)}/preview-cache?font_scale_key=${encodeURIComponent(currentIssuePreviewCacheKey())}`,
   );
 }
 
@@ -2701,7 +2860,12 @@ async function generatePreview(reason = "", { forceDownload = false } = {}) {
       return;
     } else {
       let templatePageCount = 0;
-      ({ bytes, templatePageCount } = await buildNoticePdfDocument(state.issue, state.blocks, state.paperFontScale));
+      ({ bytes, templatePageCount } = await buildNoticePdfDocument(
+        state.issue,
+        state.blocks,
+        state.paperFontScale,
+        buildNoticeRenderOptions(),
+      ));
       if (generation !== state.previewGeneration) {
         return;
       }
@@ -2941,6 +3105,18 @@ function bindEditEvents() {
       const itemKey = button.getAttribute("data-toggle-item-collapse");
       setItemCollapsed(itemKey, !state.editorCollapse.items[itemKey]);
       renderEditor(true);
+    });
+  });
+
+  document.querySelectorAll("[data-toggle-block-item-markers]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const blockIndex = Number(button.getAttribute("data-toggle-block-item-markers"));
+      const block = state.blocks[blockIndex];
+      if (!block) {
+        return;
+      }
+      updateBlockItemMarkerVisibility(blockIndex, !blockItemMarkersVisible(block));
+      renderEditor();
     });
   });
 
@@ -3720,14 +3896,21 @@ window.addEventListener("paste", (event) => {
 });
 
 window.addEventListener("storage", (event) => {
-  if (event.key !== paperFontScaleStorageKey) {
+  const blockDisplayStorageKey = issueBlockDisplayPrefStorageKey();
+  if (event.key !== paperFontScaleStorageKey && event.key !== blockDisplayStorageKey) {
     return;
   }
-  state.paperFontScale = loadPaperFontScale();
+  if (event.key === paperFontScaleStorageKey) {
+    state.paperFontScale = loadPaperFontScale();
+  }
+  if (event.key === blockDisplayStorageKey) {
+    applyIssueBlockDisplayPrefsToCurrentBlocks();
+  }
+  invalidateNoticePreviewBytes();
   if (boot.view === "edit" && state.issue) {
     renderEditor();
   } else if (boot.view === "print" && state.issue) {
-    schedulePreview("storage-font-scale");
+    schedulePreview("storage-display-pref");
   }
 });
 

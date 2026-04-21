@@ -13,6 +13,9 @@ const BODY_BOLD_FONT_NAME = "JokaiBodyBold";
 const TITLE_FONT_NAME = "JokaiTitle";
 export const NOTICE_RENDER_VERSION = "notice-pdf-layout-v4|noto-sans-jp-static-v2|pdfme-raster-v3";
 const DEFAULT_AGENDA_LABEL = "常会事項";
+const NOTICE_RENDER_OPTION_DEFAULTS = Object.freeze({
+  blockShowItemMarkers: Object.freeze({}),
+});
 const ITEM_META_LAYOUT_STACKED = "stacked";
 const ITEM_META_LAYOUT_SAME_LINE = "same_line";
 const ITEM_SUPPLEMENT_TONE_RED = "red";
@@ -929,6 +932,39 @@ function itemMarker(index) {
   return markers[index] || `${index + 1}.`;
 }
 
+function normalizeNoticeBlockShowItemMarkers(value = {}) {
+  const normalized = Object.create(null);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return normalized;
+  }
+  Object.entries(value).forEach(([key, markerVisible]) => {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      return;
+    }
+    normalized[normalizedKey] = markerVisible !== false;
+  });
+  return normalized;
+}
+
+function normalizeNoticeRenderOptions(options = NOTICE_RENDER_OPTION_DEFAULTS) {
+  return {
+    blockShowItemMarkers: normalizeNoticeBlockShowItemMarkers(options?.blockShowItemMarkers),
+  };
+}
+
+function noticeRenderBlockKey(block, index) {
+  return String(block?.id || block?.editor_key || `index:${index}`).trim();
+}
+
+function blockShowItemMarkers(renderOptions, block, index) {
+  const blockKey = noticeRenderBlockKey(block, index);
+  if (blockKey && Object.prototype.hasOwnProperty.call(renderOptions.blockShowItemMarkers, blockKey)) {
+    return renderOptions.blockShowItemMarkers[blockKey] !== false;
+  }
+  return block?.show_item_markers !== false;
+}
+
 function normalizeItemRows(block) {
   if (Array.isArray(block.items) && block.items.length) {
     return block.items.map((item) => ({
@@ -1002,20 +1038,28 @@ function computeSectionHeadingGeometry(block, index, typography, issue) {
   };
 }
 
-function computeItemGeometry(item, assets, itemIndex, typography) {
-  const bodyTextWidthMm = textWidthFromX(18);
+function buildItemTitleText(item, assetCount, itemIndex, showItemMarkers) {
+  if (!itemHasVisibleContent(item, assetCount)) {
+    return "";
+  }
   const headingText = normalizeText(item.heading);
-  const titleText = itemHasVisibleContent(item, assets.length)
-    ? headingText
-      ? `${itemMarker(itemIndex)} ${headingText}`
-      : itemMarker(itemIndex)
-    : "";
-  const headingBlock = wrapText(titleText, {
+  if (!showItemMarkers) {
+    return headingText;
+  }
+  const marker = itemMarker(itemIndex);
+  return headingText ? `${marker} ${headingText}` : marker;
+}
+
+function computeItemGeometry(item, assets, itemIndex, typography, showItemMarkers) {
+  const bodyTextWidthMm = textWidthFromX(18);
+  const titleText = buildItemTitleText(item, assets.length, itemIndex, showItemMarkers);
+  const headingLayout = wrapText(titleText, {
     widthMm: bodyTextWidthMm,
     fontSizePt: typography.h2.item,
     lineHeight: typography.h2.lineHeight,
     fontFamily: BODY_FONT_FAMILY,
   });
+  const headingHeight = titleText ? Math.max(headingLayout.heightMm, 4.6) : 0;
   const bodyText = formatIndentedCopyText(item.body);
   const bodyBlock = wrapText(bodyText, {
     widthMm: bodyTextWidthMm,
@@ -1040,7 +1084,7 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
   const mainHeight =
     Math.max(
       4.8,
-      headingBlock.heightMm +
+      headingHeight +
         (bodyBlock.heightMm ? bodyBlock.heightMm + 1.1 : 0) +
         (supplementHeight ? supplementHeight + 0.8 : 0) +
         (metaBlock.heightMm ? metaBlock.heightMm + 0.8 : 0),
@@ -1051,7 +1095,8 @@ function computeItemGeometry(item, assets, itemIndex, typography) {
     : 0;
   return {
     titleText,
-    headingText: headingBlock,
+    headingLayout,
+    headingHeight,
     bodyText,
     bodyLayout: bodyBlock,
     supplementLayouts,
@@ -1082,12 +1127,12 @@ function addSectionHeading(page, block, index, rowTop, typography, issue) {
   return height + 1.2;
 }
 
-function addItemRow(page, block, item, assets, itemIndex, rowTop, typography, issue) {
+function addItemRow(page, block, item, assets, itemIndex, rowTop, typography, issue, showItemMarkers) {
   const headingX = 18;
   const textWidth = textWidthFromX(headingX);
   const thumbScale = normalizeItemThumbnailScalePercent(item.thumb_scale_percent) / 100;
-  const { titleText, headingText, bodyText, bodyLayout, supplementLayouts, metaText, metaHeight, rowHeight } =
-    computeItemGeometry(item, assets, itemIndex, typography);
+  const { titleText, headingHeight, bodyText, bodyLayout, supplementLayouts, metaText, metaHeight, rowHeight } =
+    computeItemGeometry(item, assets, itemIndex, typography, showItemMarkers);
 
   const thumbnailSchemas = assets.map((asset, assetIndex) => {
     const itemTop = rowTop + assetIndex * (THUMB_SLOT_HEIGHT_MM + THUMB_SLOT_GAP_MM);
@@ -1105,23 +1150,25 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography, is
     page.unshift(...thumbnailSchemas);
   }
 
-  pushTextSchema(
-    page,
-    {
-      name: `item-heading-${page.length}`,
-      x: headingX,
-      y: rowTop,
-      width: textWidth,
-      height: Math.max(headingText.heightMm + 0.4, 4.6),
-      content: titleText,
-      fontName: BODY_FONT_NAME,
-      fontSize: typography.h2.item,
-      lineHeight: typography.h2.lineHeight,
-    },
-    { halo: true },
-  );
+  if (titleText) {
+    pushTextSchema(
+      page,
+      {
+        name: `item-heading-${page.length}`,
+        x: headingX,
+        y: rowTop,
+        width: textWidth,
+        height: headingHeight + 0.4,
+        content: titleText,
+        fontName: BODY_FONT_NAME,
+        fontSize: typography.h2.item,
+        lineHeight: typography.h2.lineHeight,
+      },
+      { halo: true },
+    );
+  }
 
-  let cursorY = rowTop + Math.max(headingText.heightMm, 4.6) + 0.5;
+  let cursorY = rowTop + (headingHeight ? headingHeight + 0.5 : 0);
   if (bodyLayout.heightMm) {
     pushTextSchema(
       page,
@@ -1197,8 +1244,9 @@ function addItemRow(page, block, item, assets, itemIndex, rowTop, typography, is
   return rowHeight;
 }
 
-function buildTemplate(issue, blocks, attachmentAssets, fontScale) {
+function buildTemplate(issue, blocks, attachmentAssets, fontScale, renderOptions) {
   const typography = buildPaperTypography(fontScale);
+  const normalizedRenderOptions = normalizeNoticeRenderOptions(renderOptions);
   const footerLayout = computeFooterLayout(issue, typography);
   const pageBottomLimit = contentBottomLimit(footerLayout);
   const pages = [];
@@ -1208,11 +1256,12 @@ function buildTemplate(issue, blocks, attachmentAssets, fontScale) {
   let printedCount = 0;
 
   blocks.forEach((block, index) => {
+    const showItemMarkers = blockShowItemMarkers(normalizedRenderOptions, block, index);
     const items = normalizeItemRows(block);
     const firstAssets = attachmentAssets.get(attachmentAssetKey(block, items[0])) || [];
     const estimatedFirstRow =
       computeSectionHeadingGeometry(block, index, typography, issue).height +
-      computeItemGeometry(items[0], firstAssets, 0, typography).rowHeight +
+      computeItemGeometry(items[0], firstAssets, 0, typography, showItemMarkers).rowHeight +
       4;
     const remaining = pageBottomLimit - cursorY;
     if (remaining < estimatedFirstRow && index > 0) {
@@ -1226,7 +1275,7 @@ function buildTemplate(issue, blocks, attachmentAssets, fontScale) {
 
     items.forEach((item, itemIndex) => {
       const assets = attachmentAssets.get(attachmentAssetKey(block, item)) || [];
-      const rowHeight = computeItemGeometry(item, assets, itemIndex, typography).rowHeight;
+      const rowHeight = computeItemGeometry(item, assets, itemIndex, typography, showItemMarkers).rowHeight;
       if (pageBottomLimit - cursorY < rowHeight && itemIndex > 0) {
         addContinuationMarker(page, typography);
         page = createPageTemplate();
@@ -1234,7 +1283,17 @@ function buildTemplate(issue, blocks, attachmentAssets, fontScale) {
         cursorY = addContinuationHeader(page, issue, pages.length, typography) + 2;
         cursorY += addSectionHeading(page, block, index, cursorY, typography, issue);
       }
-      const actualHeight = addItemRow(page, block, item, assets, itemIndex, cursorY, typography, issue);
+      const actualHeight = addItemRow(
+        page,
+        block,
+        item,
+        assets,
+        itemIndex,
+        cursorY,
+        typography,
+        issue,
+        showItemMarkers,
+      );
       cursorY += actualHeight + 2.8;
     });
 
@@ -1332,9 +1391,14 @@ export function pdfFileName(issue) {
   return `${base}.pdf`;
 }
 
-export async function buildNoticePdfDocument(issue, blocks, fontScale = PAPER_FONT_SCALE_DEFAULTS) {
+export async function buildNoticePdfDocument(
+  issue,
+  blocks,
+  fontScale = PAPER_FONT_SCALE_DEFAULTS,
+  renderOptions = NOTICE_RENDER_OPTION_DEFAULTS,
+) {
   const [font, attachmentAssets] = await Promise.all([loadFonts(), buildAttachmentAssets(blocks)]);
-  const template = buildTemplate(issue, blocks, attachmentAssets, fontScale);
+  const template = buildTemplate(issue, blocks, attachmentAssets, fontScale, renderOptions);
   validateTemplate(template);
   const bytes = await generate({
     template,

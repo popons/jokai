@@ -496,3 +496,16 @@
 - 2026-04-15 23:42:17 +0900 [codified-context] `AGENTS.md` と `context/repo-map.md` に editor 折りたたみUI、一括操作バー、UI-only state、routing 注意点を追記。
 - 2026-04-15 23:42:52 +0900 [codified-context] エラーファイル再確認後、git-commit skill を読んで今回の UI 実装差分と codified context 更新を同一トピックでまとめる段階へ移行。
 - 2026-04-15 23:44:23 +0900 [git] 指定パスの git-commit skill が見つからなかったため、利用可能 skill 一覧に載っていた `/home/fuse/.agents/skills/git-commit/SKILL.md` を正本として参照する方針へ切替。
+- 2026-04-15 23:47:14 +0900 [調査] `docs/exmple.png`・`context/repo-map.md`・`web-src/main.js`・`web-src/notice-pdf.js` を確認し、小項目番号 `①②...` は保存データではなく editor 表示と PDF 組版時の描画ロジックで付与されていると特定。UI-only モード追加で editor / preview / PDF を連動させる方針を確定。
+- 2026-04-15 23:51:17 +0900 [実装] `web-src/main.js` に小項目番号の browser-local 表示設定、表示コントロールカード、preview cache key 反映、PDF 組版呼び出しへの `showItemMarkers` 伝搬を追加。`web-src/notice-pdf.js` では番号非表示時に heading 空白行が残らないよう item 見出し高さ計算も調整し、`web-src/app.css` に表示モードカードのスタイルを追加。
+- 2026-04-15 23:53:17 +0900 [context更新] `AGENTS.md` と `context/repo-map.md` の preview cache 記述を `paper display key` へ更新し、browser-local な小項目番号表示モードと editor 左カラムの `小項目番号` コントロールを repo 正本へ反映。
+- 2026-04-15 23:53:53 +0900 [build/format] `npm run build` で `web-dist/app.css` と `web-dist/app.js` を更新し、`cargo fmt` を実行。Vite の chunk size 警告は継続だが build 自体は成功。
+- 2026-04-15 23:55:08 +0900 [整理] `context/repo-map.md` の Preview Flow / Final PDF Flow に `buildNoticePdfDocument(issue, blocks, fontScale, renderOptions)` の新シグネチャを追記し、renderOptions が紙面表示モードまで含むことを明示。
+- 2026-04-15 23:55:54 +0900 [build/format] `notice-pdf.js` の最終整理後に `npm run build` を再実行して `web-dist` を再同期し、`cargo fmt` を再実行。chunk size 警告のみ継続で、生成自体は成功。
+- 2026-04-15 23:57:06 +0900 [確認] `http://localhost:12040/issues/b64db5f3-f9a6-446c-8aa7-2c98faed4384/edit` を実機確認し、左カラムに `小項目番号` コントロールが出ること、`非表示` で editor 内の `①②` が消えること、確認後に `表示` へ戻したことを確認。
+- 2026-04-16 00:00:42 +0900 [要件修正] ユーザーから『小項目番号は全体一括ではなく block-card ごとに ON/OFF したい』との修正要望を受領。既存の全体トグルは要件ズレと判断し、block 単位 UI-only 設定へ組み替える方針へ変更。
+- 2026-04-16 00:06:30 +0900 [要件追加] ユーザーから editor 初期表示を『全部折りたたみ』相当にする追加要望を受領。`号の骨格` / `文字サイズ` / block-card / item-card の既定 collapse を true に倒す方針を確定。
+- 2026-04-16 00:07:23 +0900 [実装] `web-src/main.js` を全体小項目番号トグルから issue ごとの block 単位トグルへ組み替え、localStorage key を block 表示設定用へ変更。あわせて editor の collapse 初期値を全部 true に変更し、`notice-pdf.js` は block ごとの `show_item_markers` map を解釈する形へ変更。
+- 2026-04-16 00:08:17 +0900 [確認] 編集画面を再読込して、`号の骨格` / `文字サイズ` / 各 block-card が初期 collapsed で出ること、block ごとの `小項目番号` トグルが独立して効くことを確認。検証で 1 件だけ `番号非表示` にした後、既定の `表示` に戻した。
+- 2026-04-16 00:10:37 +0900 [context更新] `AGENTS.md` と `context/repo-map.md` を、global な小項目番号モード前提から『issue ごとの block 単位トグル』『初期全部折りたたみ』『paper display key は block ごとの番号設定を含む』前提へ更新。
+- 2026-04-16 22:55:16 +0900 [確認] `build-error.txt` / `test-error.txt` / `clippy-error.txt` を確認。現時点では Rust の build/test 失敗は出ておらず、`build-error.txt` だけを根拠に直すべきエラーは見当たらない。
