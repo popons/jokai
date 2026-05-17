@@ -806,6 +806,38 @@ button {
   justify-content: flex-end;
 }
 
+.editor-collapse-levels {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid rgba(91, 124, 240, 0.18);
+  background: rgba(250, 252, 255, 0.92);
+}
+
+.editor-collapse-level-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.editor-collapse-level-button:hover {
+  color: var(--ink);
+}
+
+.editor-collapse-level-button.is-active {
+  background: linear-gradient(180deg, #eef4ff 0%, #dde8ff 100%);
+  color: var(--accent-deep);
+  box-shadow: inset 0 0 0 1px rgba(91, 124, 240, 0.14);
+}
+
 .card--collapsible.is-collapsed,
 .block-card.is-collapsed,
 .item-card.is-collapsed {
@@ -906,6 +938,15 @@ button {
   border-radius: 12px;
   border: 1px solid rgba(129, 146, 177, 0.18);
   background: rgba(255, 255, 255, 0.96);
+}
+
+.item-card:not(.is-collapsed) {
+  border-color: rgba(64, 92, 177, 0.5);
+  box-shadow:
+    inset 4px 0 0 rgba(79, 115, 227, 0.68),
+    0 0 0 1px rgba(79, 115, 227, 0.08),
+    0 10px 24px rgba(49, 74, 139, 0.12);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(246, 250, 255, 0.98));
 }
 
 .item-toolbar {
@@ -1697,6 +1738,7 @@ button {
   }
 
   .editor-fold-toolbar__actions,
+  .editor-collapse-levels,
   .card-header-actions {
     justify-content: flex-start;
   }
@@ -1741,9 +1783,14 @@ button {
 
   .block-toolbar-actions,
   .editor-fold-toolbar__actions,
+  .editor-collapse-levels,
   .card-header-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .editor-collapse-level-button {
+    flex: 1 1 0;
   }
 }
 

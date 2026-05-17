@@ -120,6 +120,23 @@ const state = {
 };
 
 const itemIndexLabels = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫"];
+const editorCollapsePresets = [
+  {
+    value: "expanded",
+    label: "全展開",
+    title: "号の骨格・文字サイズ・大項目・小項目をすべて展開",
+  },
+  {
+    value: "middle",
+    label: "中間",
+    title: "号の骨格・文字サイズ・小項目を折りたたみ、大項目だけ展開",
+  },
+  {
+    value: "collapsed",
+    label: "全閉じ",
+    title: "号の骨格・文字サイズ・大項目・小項目をすべて折りたたみ",
+  },
+];
 let printShortcutPending = false;
 
 function normalizeIssueListMode(value) {
@@ -1392,7 +1409,7 @@ function syncEditorCollapseState() {
     }
     nextBlocks[block.editor_key] = Object.prototype.hasOwnProperty.call(state.editorCollapse.blocks, block.editor_key)
       ? Boolean(state.editorCollapse.blocks[block.editor_key])
-      : true;
+      : false;
 
     block.items.forEach((item) => {
       if (!item.editor_key) {
@@ -1445,15 +1462,47 @@ function setItemCollapsed(itemKey, collapsed) {
   state.editorCollapse.items[itemKey] = Boolean(collapsed);
 }
 
-function setAllEditorSectionsCollapsed(collapsed) {
+function editorCollapseValuesMatch(panelCollapsed, blockCollapsed, itemCollapsed) {
+  const blockKeys = Object.keys(state.editorCollapse.blocks);
+  const itemKeys = Object.keys(state.editorCollapse.items);
+  return (
+    state.editorCollapse.issueMeta === panelCollapsed &&
+    state.editorCollapse.fontScale === panelCollapsed &&
+    blockKeys.every((blockKey) => state.editorCollapse.blocks[blockKey] === blockCollapsed) &&
+    itemKeys.every((itemKey) => state.editorCollapse.items[itemKey] === itemCollapsed)
+  );
+}
+
+function currentEditorCollapsePreset() {
   syncEditorCollapseState();
-  setEditorPanelCollapsed("issueMeta", collapsed);
-  setEditorPanelCollapsed("fontScale", collapsed);
+  if (editorCollapseValuesMatch(false, false, false)) {
+    return "expanded";
+  }
+  if (editorCollapseValuesMatch(true, false, true)) {
+    return "middle";
+  }
+  if (editorCollapseValuesMatch(true, true, true)) {
+    return "collapsed";
+  }
+  return "";
+}
+
+function setEditorCollapsePreset(preset) {
+  syncEditorCollapseState();
+  const collapseAll = preset === "collapsed";
+  const collapsePanels = preset === "middle" || preset === "collapsed";
+  const collapseItems = preset === "middle" || preset === "collapsed";
+  const expandTopLevels = preset === "expanded" || preset === "middle";
+  if (!expandTopLevels && !collapseAll) {
+    return;
+  }
+  setEditorPanelCollapsed("issueMeta", collapsePanels);
+  setEditorPanelCollapsed("fontScale", collapsePanels);
   Object.keys(state.editorCollapse.blocks).forEach((blockKey) => {
-    state.editorCollapse.blocks[blockKey] = Boolean(collapsed);
+    state.editorCollapse.blocks[blockKey] = collapseAll;
   });
   Object.keys(state.editorCollapse.items).forEach((itemKey) => {
-    state.editorCollapse.items[itemKey] = Boolean(collapsed);
+    state.editorCollapse.items[itemKey] = collapseItems;
   });
 }
 
@@ -1515,15 +1564,28 @@ function itemMetaSummary(item) {
 }
 
 function renderEditorCollapseToolbar() {
+  const currentPreset = currentEditorCollapsePreset();
   return `
     <section class="editor-fold-toolbar" aria-label="折りたたみツールバー">
       <div class="editor-fold-toolbar__copy">
         <strong>表示コントロール</strong>
-        <span>号の骨格・文字サイズ・大項目・小項目をまとめて切り替えます。</span>
+        <span>全展開・大項目だけ表示・全閉じをまとめて切り替えます。</span>
       </div>
-      <div class="editor-fold-toolbar__actions">
-        <button class="ghost-button" type="button" data-collapse-all="expand">全部展開</button>
-        <button class="ghost-button" type="button" data-collapse-all="collapse">全部折りたたみ</button>
+      <div class="editor-collapse-levels" role="group" aria-label="折りたたみレベル">
+        ${editorCollapsePresets
+          .map((preset) => {
+            const active = currentPreset === preset.value;
+            return `
+          <button
+            class="editor-collapse-level-button ${active ? "is-active" : ""}"
+            type="button"
+            data-collapse-preset="${escapeHtml(preset.value)}"
+            aria-pressed="${active ? "true" : "false"}"
+            title="${escapeHtml(preset.title)}"
+          >${escapeHtml(preset.label)}</button>
+        `;
+          })
+          .join("")}
       </div>
     </section>
   `;
@@ -3076,10 +3138,10 @@ function bindEditEvents() {
     });
   });
 
-  document.querySelectorAll("[data-collapse-all]").forEach((button) => {
+  document.querySelectorAll("[data-collapse-preset]").forEach((button) => {
     button.addEventListener("click", () => {
-      const collapseMode = button.getAttribute("data-collapse-all");
-      setAllEditorSectionsCollapsed(collapseMode === "collapse");
+      const collapsePreset = button.getAttribute("data-collapse-preset");
+      setEditorCollapsePreset(collapsePreset);
       renderEditor(true);
     });
   });

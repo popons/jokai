@@ -509,3 +509,15 @@
 - 2026-04-16 00:08:17 +0900 [確認] 編集画面を再読込して、`号の骨格` / `文字サイズ` / 各 block-card が初期 collapsed で出ること、block ごとの `小項目番号` トグルが独立して効くことを確認。検証で 1 件だけ `番号非表示` にした後、既定の `表示` に戻した。
 - 2026-04-16 00:10:37 +0900 [context更新] `AGENTS.md` と `context/repo-map.md` を、global な小項目番号モード前提から『issue ごとの block 単位トグル』『初期全部折りたたみ』『paper display key は block ごとの番号設定を含む』前提へ更新。
 - 2026-04-16 22:55:16 +0900 [確認] `build-error.txt` / `test-error.txt` / `clippy-error.txt` を確認。現時点では Rust の build/test 失敗は出ておらず、`build-error.txt` だけを根拠に直すべきエラーは見当たらない。
+- 2026-05-17 21:27:13 +0900 [UI] 常会案内 editor の折りたたみ操作を「全展開 / 中間 / 全閉じ」の3段階ボタンへ変更開始。指定 URL は 200 OK で表示コントロールも確認済み。
+- 2026-05-17 21:28:15 +0900 [UI] `web-src/main.js` に折りたたみ preset 判定と適用処理を追加し、ツールバーを3段階の segmented button に変更。`web-src/app.css` で active 表示と mobile 幅を調整。
+- 2026-05-17 21:29:13 +0900 [確認] `npm run build` と `cargo fmt` を実行。`build-error.txt` / `test-error.txt` / `clippy-error.txt` に失敗なし。Chrome で対象 edit URL を再読込し、全展開・中間・全閉じの pressed 表示と混在時 active 解除を確認。
+- 2026-05-17 21:31:15 +0900 [UI] 中間 preset の意図を再調整開始。中間では `号の骨格` と `文字サイズ` も畳み、大項目だけ開いて小項目を要約表示にする。
+- 2026-05-17 21:32:03 +0900 [確認] `npm run build` と `cargo fmt` を再実行し、監視ログに失敗なし。Chrome で `中間` 押下時に `号の骨格` / `文字サイズ` が畳まれ、大項目だけ展開、小項目が要約表示になることを確認。
+- 2026-05-17 21:34:41 +0900 [UI] 展開中の `.item-card:not(.is-collapsed)` だけ枠が目立つように CSS 調整開始。折りたたみ状態との差を明確にする。
+- 2026-05-17 21:35:25 +0900 [確認] `npm run build` と `cargo fmt` を実行し、監視ログに失敗なし。Chrome の computed style で展開中 `.item-card` に濃い border / 左アクセント / shadow が当たることを確認。
+- 2026-05-17 21:36:09 +0900 [UI] editor 初期折りたたみ状態を `中間` 相当に変更開始。`号の骨格` / `文字サイズ` と小項目は畳み、大項目は開いた状態を初期値にする。
+- 2026-05-17 21:36:54 +0900 [確認] `npm run build` と `cargo fmt` を実行し、監視ログに失敗なし。Chrome isolated context で edit 画面を新規表示し、初期状態が `中間` pressed、`号の骨格` / `文字サイズ` 折りたたみ、大項目展開、小項目要約表示になることを確認。
+- 2026-05-17 21:37:47 +0900 [context更新] `codified-context-maintenance` を開始。折りたたみ UI 変更に対して `AGENTS.md` / `context/repo-map.md` の `全部折りたたみ` 旧説明を更新対象として特定。
+- 2026-05-17 21:39:03 +0900 [context更新] `context/repo-map.md` の折りたたみ初期状態を `中間` 相当に更新し、展開中 item-card の枠強調も責務説明へ追記。
+- 2026-05-17 21:40:37 +0900 [確認] `codified-context-maintenance` の inspect / audit / `rg` / `git diff --check` を実行し、`全部折りたたみ` 旧説明が `AGENTS.md` と `context/repo-map.md` から消えたことを確認。未追跡 `start-playwright-server.bat` は別件として除外。
