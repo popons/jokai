@@ -58,6 +58,27 @@ const THUMB_BASE_RIGHT_X = THUMB_BASE_X + THUMB_BASE_WIDTH_MM;
 const THUMB_LABEL_X = THUMB_BASE_X + 24.4;
 const THUMB_LABEL_WIDTH_MM = 24;
 const TEXT_RIGHT_GAP_BEFORE_LABEL_MM = 1.2;
+
+function normalizeBasePath(value = "") {
+  const raw = String(value || "").trim().replace(/\/+$/, "");
+  if (!raw || raw === "/") {
+    return "";
+  }
+  return raw.startsWith("/") ? raw : `/${raw}`;
+}
+
+function appUrl(path = "/") {
+  const value = String(path || "/");
+  if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(value)) {
+    return value;
+  }
+  const basePath = normalizeBasePath(document.querySelector("#app")?.dataset.basePath || "");
+  const normalizedPath = value.startsWith("/") ? value : `/${value}`;
+  if (!basePath || normalizedPath === basePath || normalizedPath.startsWith(`${basePath}/`)) {
+    return normalizedPath;
+  }
+  return normalizedPath === "/" ? `${basePath}/` : `${basePath}${normalizedPath}`;
+}
 const THUMB_SLOT_HEIGHT_MM = 16.6;
 const THUMB_SLOT_GAP_MM = 2.6;
 const TEXT_HALO_COLOR = "#ffffff";
@@ -544,9 +565,9 @@ let fontPromise = null;
 async function loadFonts() {
   if (!fontPromise) {
     fontPromise = Promise.all([
-      fetch("/assets/fonts/body.ttf").then((response) => response.arrayBuffer()),
-      fetch("/assets/fonts/body-bold.ttf").then((response) => response.arrayBuffer()),
-      fetch("/assets/fonts/title.ttf").then((response) => response.arrayBuffer()),
+      fetch(appUrl("/assets/fonts/body.ttf")).then((response) => response.arrayBuffer()),
+      fetch(appUrl("/assets/fonts/body-bold.ttf")).then((response) => response.arrayBuffer()),
+      fetch(appUrl("/assets/fonts/title.ttf")).then((response) => response.arrayBuffer()),
     ]).then(([bodyFont, bodyBoldFont, titleFont]) => ({
       [BODY_FONT_NAME]: { data: bodyFont, fallback: true },
       [BODY_BOLD_FONT_NAME]: { data: bodyBoldFont },
@@ -564,7 +585,7 @@ async function dataUrlFromUrl(url, fallbackLabel) {
   if (!attachmentDataUrlCache.has(url)) {
     attachmentDataUrlCache.set(
       url,
-      fetch(url)
+      fetch(appUrl(url))
         .then((response) => response.blob())
         .then(
           (blob) =>

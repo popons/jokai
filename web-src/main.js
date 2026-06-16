@@ -38,12 +38,38 @@ import {
 
 const app = document.querySelector("#app");
 
+function normalizeBasePath(value = "") {
+  const raw = String(value || "").trim().replace(/\/+$/, "");
+  if (!raw || raw === "/") {
+    return "";
+  }
+  return raw.startsWith("/") ? raw : `/${raw}`;
+}
+
+function appUrl(path = "/") {
+  const value = String(path || "/");
+  if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(value)) {
+    return value;
+  }
+  const basePath = boot.basePath;
+  const normalizedPath = value.startsWith("/") ? value : `/${value}`;
+  if (!basePath || normalizedPath === basePath || normalizedPath.startsWith(`${basePath}/`)) {
+    return normalizedPath;
+  }
+  return normalizedPath === "/" ? `${basePath}/` : `${basePath}${normalizedPath}`;
+}
+
+function apiUrl(path = "/") {
+  return appUrl(path);
+}
+
 const boot = {
   view: app?.dataset.view || "index",
   issueId: app?.dataset.issueId || "",
   templateDocumentId: app?.dataset.templateDocumentId || "",
   familyTab: normalizeFamilyKey(app?.dataset.familyTab || ISSUE_FAMILY_KEY),
   printMode: app?.dataset.printMode === "1",
+  basePath: normalizeBasePath(app?.dataset.basePath || ""),
 };
 
 const issueTypeLabels = {
@@ -737,7 +763,7 @@ function renderIssueNavigationLink(entry, direction) {
   return `
     <a
       class="ghost-link issue-nav-link"
-      href="/issues/${encodeURIComponent(entry.id)}/edit"
+      href="${escapeHtml(appUrl(`/issues/${encodeURIComponent(entry.id)}/edit`))}"
       title="${escapeHtml(issueNavigationTooltip(entry))}"
     >${label}</a>
   `;
@@ -805,15 +831,15 @@ function payloadFromState() {
 }
 
 function printPageUrl(issueId = state.issue?.id || boot.issueId) {
-  return `/issues/${encodeURIComponent(issueId || "")}/print`;
+  return appUrl(`/issues/${encodeURIComponent(issueId || "")}/print`);
 }
 
 function templateDocumentEditUrl(templateDocumentId = state.templateDocument?.id || boot.templateDocumentId) {
-  return `/template-documents/${encodeURIComponent(templateDocumentId || "")}/edit`;
+  return appUrl(`/template-documents/${encodeURIComponent(templateDocumentId || "")}/edit`);
 }
 
 function templateDocumentPrintUrl(templateDocumentId = state.templateDocument?.id || boot.templateDocumentId) {
-  return `/template-documents/${encodeURIComponent(templateDocumentId || "")}/print`;
+  return appUrl(`/template-documents/${encodeURIComponent(templateDocumentId || "")}/print`);
 }
 
 function parseTemplatePayloadText(rawText = state.templatePayloadText) {
@@ -1176,7 +1202,7 @@ async function api(path, options = {}) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
   }
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...options,
     headers,
     body,
@@ -1199,7 +1225,7 @@ async function apiBinary(path, options = {}) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(body);
   }
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...options,
     headers,
     body,
@@ -1245,6 +1271,7 @@ function renderAttachmentViewerHtml() {
   if (!attachment) {
     return `<div class="empty-state">まだ資料はありません。保存済みの block に PDF や画像を追加すると、ここで原本を確認できます。</div>`;
   }
+  const contentUrl = appUrl(attachment.content_url);
 
   if (attachment.display_kind === "pdf") {
     return `
@@ -1253,7 +1280,7 @@ function renderAttachmentViewerHtml() {
         <span class="badge badge--accent">PDF 原本</span>
       </div>
       <div class="asset-stage">
-        <iframe class="asset-frame" src="${escapeHtml(attachment.content_url)}#view=FitH" title="${escapeHtml(attachment.original_filename)}"></iframe>
+        <iframe class="asset-frame" src="${escapeHtml(contentUrl)}#view=FitH" title="${escapeHtml(attachment.original_filename)}"></iframe>
       </div>
       <div class="asset-caption">${escapeHtml(attachment.original_filename)}</div>
     `;
@@ -1266,7 +1293,7 @@ function renderAttachmentViewerHtml() {
         <span class="badge badge--accent">画像原本</span>
       </div>
       <div class="asset-stage asset-stage--image">
-        <img class="asset-image" src="${escapeHtml(attachment.content_url)}" alt="${escapeHtml(attachment.original_filename)}">
+        <img class="asset-image" src="${escapeHtml(contentUrl)}" alt="${escapeHtml(attachment.original_filename)}">
       </div>
       <div class="asset-caption">${escapeHtml(attachment.original_filename)}</div>
     `;
@@ -1279,7 +1306,7 @@ function renderAttachmentViewerHtml() {
     </div>
     <div class="empty-state">
       <p>${escapeHtml(attachment.original_filename)}</p>
-      <p><a class="inline-link" href="${escapeHtml(attachment.content_url)}" target="_blank" rel="noreferrer">原本を開く</a></p>
+      <p><a class="inline-link" href="${escapeHtml(contentUrl)}" target="_blank" rel="noreferrer">原本を開く</a></p>
     </div>
   `;
 }
@@ -1834,7 +1861,7 @@ function renderIssueCards() {
   return state.issues.length
     ? state.issues
         .map((issue) => {
-          const editHref = `/issues/${encodeURIComponent(issue.id)}/edit`;
+          const editHref = appUrl(`/issues/${encodeURIComponent(issue.id)}/edit`);
           const deleteDisabled = isIssuePublished(issue);
           const deleteAttributes = deleteDisabled
             ? ' disabled title="発行済みの案内は削除できません"'
@@ -1858,7 +1885,7 @@ function renderIssueCards() {
               <div class="issue-card-footer">
                 <span class="issue-card-stat">${escapeHtml(issuePublishedStat(issue))}</span>
                 <div class="issue-card-actions">
-                  <a class="issue-link" href="${editHref}">${entryLabel}</a>
+                  <a class="issue-link" href="${escapeHtml(editHref)}">${entryLabel}</a>
                   <button class="ghost-button" type="button" data-duplicate-issue="${escapeHtml(issue.id)}">複製</button>
                   <button class="ghost-button ghost-button--danger" type="button" data-delete-issue="${escapeHtml(issue.id)}"${deleteAttributes}>削除</button>
                 </div>
@@ -1874,7 +1901,8 @@ function renderIssueThumbnailCards() {
   return state.issues.length
     ? state.issues
         .map((issue) => {
-          const editHref = `/issues/${encodeURIComponent(issue.id)}/edit`;
+          const editHref = appUrl(`/issues/${encodeURIComponent(issue.id)}/edit`);
+          const thumbnailUrl = issue.thumbnail_url ? appUrl(issue.thumbnail_url) : "";
           const month = monthLabel(issue.issue_month ? issue.issue_month.slice(0, 7) : "");
           const entryLabel = issuePrimaryLinkLabel(issue);
           const statusLabel = issueStatusLabel(issue.status);
@@ -1885,12 +1913,12 @@ function renderIssueThumbnailCards() {
                   <p class="issue-thumb-kicker">${escapeHtml(`${month} / ${statusLabel}`)}</p>
                   <h3 class="issue-thumb-title">${escapeHtml(issue.title)}</h3>
                 </div>
-                <a class="issue-link issue-thumb-edit" href="${editHref}">${entryLabel}</a>
+                <a class="issue-link issue-thumb-edit" href="${escapeHtml(editHref)}">${entryLabel}</a>
               </div>
-              <a class="issue-thumb-media ${issue.thumbnail_url ? "" : "has-error"}" href="${editHref}" data-issue-thumb-media>
+              <a class="issue-thumb-media ${issue.thumbnail_url ? "" : "has-error"}" href="${escapeHtml(editHref)}" data-issue-thumb-media>
                 ${
                   issue.thumbnail_url
-                    ? `<img class="issue-thumb-image" data-issue-thumbnail loading="lazy" decoding="async" src="${escapeHtml(issue.thumbnail_url)}" alt="${escapeHtml(`${issue.title || "案内"} の1ページ目サムネ`)}">`
+                    ? `<img class="issue-thumb-image" data-issue-thumbnail loading="lazy" decoding="async" src="${escapeHtml(thumbnailUrl)}" alt="${escapeHtml(`${issue.title || "案内"} の1ページ目サムネ`)}">`
                     : ""
                 }
                 <span class="issue-thumb-placeholder issue-thumb-placeholder--loading">紙面を読込中</span>
@@ -1947,7 +1975,7 @@ function renderTemplateDocumentCards() {
             <div class="issue-card-footer">
               <span class="issue-card-stat">${escapeHtml(document.status)}</span>
               <div class="issue-card-actions">
-                <a class="issue-link" href="${templateDocumentEditUrl(document.id)}">編集へ</a>
+                <a class="issue-link" href="${escapeHtml(templateDocumentEditUrl(document.id))}">編集へ</a>
                 <button class="ghost-button ghost-button--danger" type="button" data-delete-template-document="${escapeHtml(document.id)}">削除</button>
               </div>
             </div>
@@ -2106,7 +2134,7 @@ function renderIndex() {
     button.addEventListener("click", () => {
       const nextFamily = normalizeFamilyKey(button.getAttribute("data-family-tab"));
       state.activeFamily = nextFamily;
-      window.history.replaceState(null, "", familyIndexPath(nextFamily));
+      window.history.replaceState(null, "", appUrl(familyIndexPath(nextFamily)));
       renderIndex();
     });
   });
@@ -2293,7 +2321,7 @@ function renderEditor(skipPreview = false) {
 
       <div class="editor-actions">
         <div class="editor-actions-group">
-          <a class="ghost-link" href="/issues">一覧へ戻る</a>
+          <a class="ghost-link" href="${escapeHtml(appUrl("/issues"))}">一覧へ戻る</a>
           ${renderIssueNavigationLink(state.issueNavigation.newer, "newer")}
           ${renderIssueNavigationLink(state.issueNavigation.older, "older")}
           <span class="badge badge--accent">${escapeHtml(issueTypeLabels[issue.issue_type] || issue.issue_type)}</span>
@@ -2301,7 +2329,7 @@ function renderEditor(skipPreview = false) {
           <span class="issue-card-stat">${escapeHtml(issuePublishedStat(issue))}</span>
         </div>
         <div class="editor-actions-group editor-actions-group--primary">
-          <a class="ghost-link" href="/issues/${escapeHtml(issue.id)}/print" target="_blank" rel="noreferrer">印刷画面</a>
+          <a class="ghost-link" href="${escapeHtml(printPageUrl(issue.id))}" target="_blank" rel="noreferrer">印刷画面</a>
           <button class="ghost-button" type="button" id="reload-issue-button">再読込</button>
           ${
             editorReadOnly
@@ -2548,12 +2576,12 @@ function renderTemplateDocumentEditor(skipPreview = false) {
 
       <div class="editor-actions">
         <div class="editor-actions-group">
-          <a class="ghost-link" href="/template-documents">一覧へ戻る</a>
+          <a class="ghost-link" href="${escapeHtml(appUrl("/template-documents"))}">一覧へ戻る</a>
           <span class="badge badge--accent">${escapeHtml(familyDefinition(document.document_family).label)}</span>
           <span class="badge badge--draft">${escapeHtml(definition.label)}</span>
         </div>
         <div class="editor-actions-group editor-actions-group--primary">
-          <a class="ghost-link" href="${templateDocumentPrintUrl(document.id)}" target="_blank" rel="noreferrer">印刷画面</a>
+          <a class="ghost-link" href="${escapeHtml(templateDocumentPrintUrl(document.id))}" target="_blank" rel="noreferrer">印刷画面</a>
           <button class="ghost-button" type="button" id="reload-template-document-button">再読込</button>
           <button class="primary-button" type="button" id="save-template-document-button">保存する</button>
         </div>
@@ -2679,7 +2707,7 @@ function renderPrintPage(skipPreview = false) {
           <p class="print-copy">${escapeHtml(issueSummaryLine(state.issue))} / ${escapeHtml(state.issue.place || "未設定")}</p>
         </div>
         <div class="preview-actions">
-          <a class="ghost-link" href="/issues/${escapeHtml(state.issue.id)}/edit">編集へ戻る</a>
+          <a class="ghost-link" href="${escapeHtml(appUrl(`/issues/${encodeURIComponent(state.issue.id)}/edit`))}">編集へ戻る</a>
         </div>
       </header>
       <div id="global-flash-stack">${renderGlobalFlashMarkup()}</div>
@@ -2712,7 +2740,7 @@ function renderTemplateDocumentPrintPage(skipPreview = false) {
           <p class="print-copy">${escapeHtml(templateLabel(document.document_family, document.template_key))} / ${escapeHtml(document.template_version)} / ${escapeHtml(`${activeRowCount}ページ予定`)}</p>
         </div>
         <div class="preview-actions">
-          <a class="ghost-link" href="${templateDocumentEditUrl(document.id)}">編集へ戻る</a>
+          <a class="ghost-link" href="${escapeHtml(templateDocumentEditUrl(document.id))}">編集へ戻る</a>
         </div>
       </header>
       <section class="print-preview-panel">
@@ -3562,7 +3590,7 @@ async function createIssue(issueType) {
       method: "POST",
       body: { issue_type: issueType },
     });
-    window.location.href = `/issues/${response.id}/edit`;
+    window.location.href = appUrl(`/issues/${encodeURIComponent(response.id)}/edit`);
   } catch (error) {
     state.error = error.message;
     renderIndex();
@@ -3600,7 +3628,7 @@ async function duplicateIssue(issueId, { renderCurrentView = false } = {}) {
     const response = await api(`/api/issues/${encodeURIComponent(issueId)}/duplicate`, {
       method: "POST",
     });
-    window.location.href = `/issues/${encodeURIComponent(response.id)}/edit`;
+    window.location.href = appUrl(`/issues/${encodeURIComponent(response.id)}/edit`);
   } catch (error) {
     state.error = error.message;
     if (renderCurrentView) {

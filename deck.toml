@@ -1,0 +1,48 @@
+[status]
+cmd = "git status"
+
+[build]
+cmd = "npm run build"
+
+[install]
+cmd = ["npm run build", "cargo install --path . --force"]
+
+["install run"]
+cmd = ["npm run build", "cargo install --path . --force", "jokai db init", "jokai web"]
+
+["install run".env]
+DATABASE_URL = "postgresql://postgres:postgres@10.0.0.100:5432/jokai"
+DATABASE_ADMIN_URL = "postgresql://postgres:postgres@10.0.0.100:5432/postgres"
+JOKAI_BIND = "0.0.0.0:12040"
+JOKAI_BASE_PATH = "/toys/jokai"
+
+["db init"]
+cmd = "jokai db init"
+
+["db init".env]
+DATABASE_URL = "postgresql://postgres:postgres@10.0.0.100:5432/jokai"
+DATABASE_ADMIN_URL = "postgresql://postgres:postgres@10.0.0.100:5432/postgres"
+
+["systemd install"]
+cmd = "./scripts/install-user-systemd.sh"
+
+["systemd install".env]
+DATABASE_URL = "postgresql://postgres:postgres@10.0.0.100:5432/jokai"
+DATABASE_ADMIN_URL = "postgresql://postgres:postgres@10.0.0.100:5432/postgres"
+JOKAI_BIND = "0.0.0.0:12040"
+JOKAI_BASE_PATH = "/toys/jokai"
+
+["systemd start"]
+cmd = "systemctl --user start jokai.service"
+
+["systemd stop"]
+cmd = "systemctl --user stop jokai.service"
+
+["systemd restart"]
+cmd = "systemctl --user restart jokai.service"
+
+["systemd status"]
+cmd = "systemctl --user status jokai.service --no-pager"
+
+["systemd logs"]
+cmd = "journalctl --user -u jokai.service -f"

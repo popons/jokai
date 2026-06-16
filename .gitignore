@@ -10,3 +10,4 @@ tmp/
 web-dist/
 data/
 .tmp*
+.deck*

@@ -21,6 +21,27 @@ const SVG_FONT_CACHE_KEY = "template-doc-svg-embedded-fonts";
 
 let fontPromise = null;
 
+function normalizeBasePath(value = "") {
+  const raw = String(value || "").trim().replace(/\/+$/, "");
+  if (!raw || raw === "/") {
+    return "";
+  }
+  return raw.startsWith("/") ? raw : `/${raw}`;
+}
+
+function appUrl(path = "/") {
+  const value = String(path || "/");
+  if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(value)) {
+    return value;
+  }
+  const basePath = normalizeBasePath(document.querySelector("#app")?.dataset.basePath || "");
+  const normalizedPath = value.startsWith("/") ? value : `/${value}`;
+  if (!basePath || normalizedPath === basePath || normalizedPath.startsWith(`${basePath}/`)) {
+    return normalizedPath;
+  }
+  return normalizedPath === "/" ? `${basePath}/` : `${basePath}${normalizedPath}`;
+}
+
 function isValidSvgString(svgString) {
   return (
     typeof svgString === "string" &&
@@ -66,9 +87,9 @@ const svgWithFonts = {
 async function loadFonts() {
   if (!fontPromise) {
     fontPromise = Promise.all([
-      fetch("/assets/fonts/body.ttf").then((response) => response.arrayBuffer()),
-      fetch("/assets/fonts/body-bold.ttf").then((response) => response.arrayBuffer()),
-      fetch("/assets/fonts/title.ttf").then((response) => response.arrayBuffer()),
+      fetch(appUrl("/assets/fonts/body.ttf")).then((response) => response.arrayBuffer()),
+      fetch(appUrl("/assets/fonts/body-bold.ttf")).then((response) => response.arrayBuffer()),
+      fetch(appUrl("/assets/fonts/title.ttf")).then((response) => response.arrayBuffer()),
     ]).then(([bodyFont, bodyBoldFont, titleFont]) => ({
       [BODY_FONT_NAME]: { data: bodyFont, fallback: true },
       [BODY_BOLD_FONT_NAME]: { data: bodyBoldFont },

@@ -3,7 +3,7 @@
 use axum::{
   Json, Router,
   extract::{DefaultBodyLimit, Multipart, Path as RoutePath, Query, State},
-  http::{StatusCode, header},
+  http::{HeaderMap, StatusCode, header},
   response::{Html, IntoResponse},
   routing::{delete, get, post},
 };
@@ -115,6 +115,8 @@ struct WebArgs {
   database_url: String,
   #[arg(long, env = "JOKAI_BIND", default_value = DEFAULT_BIND)]
   bind: String,
+  #[arg(long, env = "JOKAI_BASE_PATH", default_value = "")]
+  base_path: String,
 }
 
 #[derive(Debug, Args)]
@@ -152,6 +154,7 @@ struct AppState {
   database_url_redacted: String,
   applied_migrations: Arc<Vec<String>>,
   issue_preview_image_cache: Arc<Mutex<IssuePreviewImageCache>>,
+  base_path: String,
   #[allow(dead_code)]
   loopback_base_url: String,
   #[allow(dead_code)]
@@ -1214,16 +1217,64 @@ fn sanitize_pdf_download_name(name: &str, fallback: &str) -> String {
   }
 }
 
+fn normalize_base_path(value: &str) -> String {
+  let raw = value
+    .split(',')
+    .next()
+    .unwrap_or("")
+    .trim()
+    .trim_end_matches('/');
+  if raw.is_empty()
+    || raw == "/"
+    || raw
+      .chars()
+      .any(|ch| ch.is_control() || matches!(ch, '?' | '#' | '"' | '\'' | '<' | '>' | '\\'))
+  {
+    return String::new();
+  }
+
+  if raw.starts_with('/') {
+    raw.to_string()
+  } else {
+    format!("/{raw}")
+  }
+}
+
+fn request_base_path(headers: &HeaderMap, state: &AppState) -> String {
+  headers
+    .get("x-forwarded-prefix")
+    .and_then(|value| value.to_str().ok())
+    .map(normalize_base_path)
+    .unwrap_or_else(|| state.base_path.clone())
+}
+
+fn app_url(base_path: &str, path: &str) -> String {
+  let path = if path.starts_with('/') {
+    path.to_string()
+  } else {
+    format!("/{path}")
+  };
+  let normalized_base_path = normalize_base_path(base_path);
+  if normalized_base_path.is_empty() {
+    path
+  } else if path == "/" {
+    format!("{normalized_base_path}/")
+  } else {
+    format!("{normalized_base_path}{path}")
+  }
+}
+
 fn app_shell(
   view: &str,
   issue_id: Option<&str>,
   template_document_id: Option<&str>,
   print_mode: bool,
   family_tab: Option<&str>,
+  base_path: &str,
 ) -> Html<String> {
-  let issue_id_attr = issue_id.unwrap_or("");
-  let template_document_id_attr = template_document_id.unwrap_or("");
-  let family_tab_attr = family_tab.unwrap_or(FAMILY_TAB_ISSUES);
+  let issue_id_attr = html_escape_text(issue_id.unwrap_or(""));
+  let template_document_id_attr = html_escape_text(template_document_id.unwrap_or(""));
+  let family_tab_attr = html_escape_text(family_tab.unwrap_or(FAMILY_TAB_ISSUES));
   let page_title = match view {
     "edit" => "jokai editor",
     "print" => "jokai print",
@@ -1233,9 +1284,18 @@ fn app_shell(
   };
   let print_attr = if print_mode { "1" } else { "0" };
   let asset_version = BUILD_TIMESTAMP_UTC;
+  let base_path_attr = html_escape_text(&normalize_base_path(base_path));
+  let app_css_url = html_escape_text(&app_url(
+    base_path,
+    &format!("/assets/app.css?v={asset_version}"),
+  ));
+  let app_js_url = html_escape_text(&app_url(
+    base_path,
+    &format!("/assets/app.js?v={asset_version}"),
+  ));
 
   Html(format!(
-    "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{page_title}</title><link rel=\"stylesheet\" href=\"/assets/app.css?v={asset_version}\"></head><body data-print-mode=\"{print_attr}\"><div id=\"app\" data-view=\"{view}\" data-issue-id=\"{issue_id_attr}\" data-template-document-id=\"{template_document_id_attr}\" data-family-tab=\"{family_tab_attr}\" data-print-mode=\"{print_attr}\"></div><script type=\"module\" src=\"/assets/app.js?v={asset_version}\"></script></body></html>"
+    "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{page_title}</title><link rel=\"stylesheet\" href=\"{app_css_url}\"></head><body data-print-mode=\"{print_attr}\"><div id=\"app\" data-view=\"{view}\" data-issue-id=\"{issue_id_attr}\" data-template-document-id=\"{template_document_id_attr}\" data-family-tab=\"{family_tab_attr}\" data-print-mode=\"{print_attr}\" data-base-path=\"{base_path_attr}\"></div><script type=\"module\" src=\"{app_js_url}\"></script></body></html>"
   ))
 }
 
@@ -1243,12 +1303,19 @@ fn template_document_print_html(
   document: &TemplateDocumentDetail,
   descriptor: TemplateDocumentDescriptor,
   svg_markups: &[String],
+  base_path: &str,
 ) -> Html<String> {
   let resolved_title = default_template_document_title(descriptor, &document.payload);
   let title = html_escape_text(&resolved_title);
   let document_id = html_escape_text(&document.id);
-  let edit_url = format!("/template-documents/{}/edit", document_id);
-  let pdf_api_url = format!("/api/template-documents/{}/print-pdf", document_id);
+  let edit_url = html_escape_text(&app_url(
+    base_path,
+    &format!("/template-documents/{}/edit", document_id),
+  ));
+  let pdf_api_url = html_escape_text(&app_url(
+    base_path,
+    &format!("/api/template-documents/{}/print-pdf", document_id),
+  ));
   let download_name_json = serde_json::to_string(&format!(
     "{}.pdf",
     sanitize_pdf_download_name(&resolved_title, "template-document")
@@ -2688,6 +2755,7 @@ fn rasterize_pdf_bytes_to_images(
 async fn fetch_issue_document(
   client: &Client,
   issue_id: &str,
+  base_path: &str,
 ) -> std::result::Result<Option<IssueDocumentResponse>, tokio_postgres::Error> {
   let issue_id = issue_id.to_string();
   let issue_row = client
@@ -2822,8 +2890,14 @@ async fn fetch_issue_document(
       original_filename: row.get::<_, String>(3),
       mime_type: row.get::<_, String>(4),
       display_kind: attachment_display_kind(&row.get::<_, String>(4)).to_string(),
-      thumbnail_url: format!("/api/attachments/{attachment_id}/thumbnail"),
-      content_url: format!("/api/attachments/{attachment_id}/content"),
+      thumbnail_url: app_url(
+        base_path,
+        &format!("/api/attachments/{attachment_id}/thumbnail"),
+      ),
+      content_url: app_url(
+        base_path,
+        &format!("/api/attachments/{attachment_id}/content"),
+      ),
     };
     if item_id.is_empty() {
       legacy_attachments_by_block
@@ -3146,61 +3220,106 @@ async fn run_db_reset(args: DbResetArgs) -> Result<()> {
   run_db_init(args.common).await
 }
 
-async fn index_page() -> impl IntoResponse {
-  app_shell("index", None, None, false, Some(FAMILY_TAB_ISSUES))
+async fn index_page(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
+  let base_path = request_base_path(&headers, &state);
+  app_shell(
+    "index",
+    None,
+    None,
+    false,
+    Some(FAMILY_TAB_ISSUES),
+    &base_path,
+  )
 }
 
-async fn issues_index_page() -> impl IntoResponse {
-  app_shell("index", None, None, false, Some(FAMILY_TAB_ISSUES))
+async fn issues_index_page(
+  State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
+) -> impl IntoResponse {
+  let base_path = request_base_path(&headers, &state);
+  app_shell(
+    "index",
+    None,
+    None,
+    false,
+    Some(FAMILY_TAB_ISSUES),
+    &base_path,
+  )
 }
 
-async fn template_documents_index_page() -> impl IntoResponse {
+async fn template_documents_index_page(
+  State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
+) -> impl IntoResponse {
+  let base_path = request_base_path(&headers, &state);
   app_shell(
     "index",
     None,
     None,
     false,
     Some(TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI),
+    &base_path,
   )
 }
 
-async fn issue_edit_page(RoutePath(issue_id): RoutePath<String>) -> impl IntoResponse {
+async fn issue_edit_page(
+  State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
+  RoutePath(issue_id): RoutePath<String>,
+) -> impl IntoResponse {
+  let base_path = request_base_path(&headers, &state);
   app_shell(
     "edit",
     Some(&issue_id),
     None,
     false,
     Some(FAMILY_TAB_ISSUES),
+    &base_path,
   )
 }
 
-async fn issue_print_page(RoutePath(issue_id): RoutePath<String>) -> impl IntoResponse {
+async fn issue_print_page(
+  State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
+  RoutePath(issue_id): RoutePath<String>,
+) -> impl IntoResponse {
+  let base_path = request_base_path(&headers, &state);
   app_shell(
     "print",
     Some(&issue_id),
     None,
     true,
     Some(FAMILY_TAB_ISSUES),
+    &base_path,
   )
 }
 
 async fn template_document_edit_page(
+  State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
   RoutePath(template_document_id): RoutePath<String>,
 ) -> impl IntoResponse {
+  let base_path = request_base_path(&headers, &state);
   app_shell(
     "template-edit",
     None,
     Some(&template_document_id),
     false,
     Some(TEMPLATE_DOCUMENT_FAMILY_SHOGAI_KYOSAI),
+    &base_path,
   )
 }
 
 async fn template_document_print_page(
   State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
   RoutePath(template_document_id): RoutePath<String>,
 ) -> impl IntoResponse {
-  let edit_url = format!("/template-documents/{template_document_id}/edit");
+  let base_path = request_base_path(&headers, &state);
+  let edit_url = app_url(
+    &base_path,
+    &format!("/template-documents/{template_document_id}/edit"),
+  );
   let Some(_browser_cmd) = &state.pdf_browser_cmd else {
     return (
       StatusCode::CONFLICT,
@@ -3279,7 +3398,8 @@ async fn template_document_print_page(
     svg_markups.push(svg_markup);
   }
 
-  template_document_print_html(&document.document, descriptor, &svg_markups).into_response()
+  template_document_print_html(&document.document, descriptor, &svg_markups, &base_path)
+    .into_response()
 }
 
 async fn healthz() -> impl IntoResponse {
@@ -3495,7 +3615,11 @@ async fn api_meta(State(state): State<Arc<AppState>>) -> impl IntoResponse {
   })
 }
 
-async fn api_issues(State(state): State<Arc<AppState>>) -> ApiResult<Vec<IssueListItem>> {
+async fn api_issues(
+  State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
+) -> ApiResult<Vec<IssueListItem>> {
+  let base_path = request_base_path(&headers, &state);
   let rows = state
     .client
     .query(
@@ -3525,10 +3649,13 @@ async fn api_issues(State(state): State<Arc<AppState>>) -> ApiResult<Vec<IssueLi
       let id = row.get::<_, String>(0);
       let source_version = row.get::<_, i64>(8);
       IssueListItem {
-        thumbnail_url: format!(
-          "/api/issues/{}/list-thumbnail?v={}",
-          sanitize_filename(&id),
-          issue_list_thumbnail_version_token(source_version)
+        thumbnail_url: app_url(
+          &base_path,
+          &format!(
+            "/api/issues/{}/list-thumbnail?v={}",
+            sanitize_filename(&id),
+            issue_list_thumbnail_version_token(source_version)
+          ),
         ),
         id,
         issue_type: row.get::<_, String>(1),
@@ -3770,9 +3897,11 @@ async fn api_template_document_delete(
 
 async fn api_issue_detail(
   State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
   RoutePath(issue_id): RoutePath<String>,
 ) -> ApiResult<IssueDocumentResponse> {
-  let document = fetch_issue_document(&state.client, &issue_id)
+  let base_path = request_base_path(&headers, &state);
+  let document = fetch_issue_document(&state.client, &issue_id, &base_path)
     .await
     .map_err(|err| api_internal(err.to_string()))?
     .ok_or_else(|| api_not_found("issue not found"))?;
@@ -3782,9 +3911,11 @@ async fn api_issue_detail(
 
 async fn api_issue_save(
   State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
   RoutePath(issue_id): RoutePath<String>,
   Json(payload): Json<SaveIssuePayload>,
 ) -> ApiResult<IssueDocumentResponse> {
+  let base_path = request_base_path(&headers, &state);
   validate_issue_type(&payload.issue_type)?;
   if payload.title.trim().is_empty() {
     return Err(api_bad_request("title must not be empty"));
@@ -4168,7 +4299,7 @@ async fn api_issue_save(
       .map_err(|err| api_internal(err.to_string()))?;
   }
 
-  let document = fetch_issue_document(&state.client, &issue_id)
+  let document = fetch_issue_document(&state.client, &issue_id, &base_path)
     .await
     .map_err(|err| api_internal(err.to_string()))?
     .ok_or_else(|| api_not_found("issue not found after save"))?;
@@ -4178,8 +4309,10 @@ async fn api_issue_save(
 
 async fn api_issue_publish(
   State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
   RoutePath(issue_id): RoutePath<String>,
 ) -> ApiResult<IssueDocumentResponse> {
+  let base_path = request_base_path(&headers, &state);
   let updated = state
     .client
     .execute(
@@ -4202,7 +4335,7 @@ async fn api_issue_publish(
     return Err(api_conflict("案内を発行できませんでした"));
   }
 
-  let document = fetch_issue_document(&state.client, &issue_id)
+  let document = fetch_issue_document(&state.client, &issue_id, &base_path)
     .await
     .map_err(|err| api_internal(err.to_string()))?
     .ok_or_else(|| api_not_found("issue not found after publish"))?;
@@ -4824,9 +4957,11 @@ async fn store_attachment_upload(
 
 async fn api_item_attachment_upload(
   State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
   RoutePath(item_id): RoutePath<String>,
   mut multipart: Multipart,
 ) -> ApiResult<IssueDocumentResponse> {
+  let base_path = request_base_path(&headers, &state);
   let item_row = state
     .client
     .query_opt(
@@ -4886,7 +5021,7 @@ async fn api_item_attachment_upload(
 
   bump_issue_source_version(&state.client, &issue_id).await?;
 
-  let document = fetch_issue_document(&state.client, &issue_id)
+  let document = fetch_issue_document(&state.client, &issue_id, &base_path)
     .await
     .map_err(|err| api_internal(err.to_string()))?
     .ok_or_else(|| api_not_found("issue not found after attachment upload"))?;
@@ -4896,9 +5031,11 @@ async fn api_item_attachment_upload(
 
 async fn api_block_attachment_upload(
   State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
   RoutePath(block_id): RoutePath<String>,
   mut multipart: Multipart,
 ) -> ApiResult<IssueDocumentResponse> {
+  let base_path = request_base_path(&headers, &state);
   let (item_id, issue_id) = ensure_first_item_for_block(&state, &block_id).await?;
 
   let mut uploaded = false;
@@ -4939,7 +5076,7 @@ async fn api_block_attachment_upload(
 
   bump_issue_source_version(&state.client, &issue_id).await?;
 
-  let document = fetch_issue_document(&state.client, &issue_id)
+  let document = fetch_issue_document(&state.client, &issue_id, &base_path)
     .await
     .map_err(|err| api_internal(err.to_string()))?
     .ok_or_else(|| api_not_found("issue not found after attachment upload"))?;
@@ -4949,8 +5086,10 @@ async fn api_block_attachment_upload(
 
 async fn api_attachment_delete(
   State(state): State<Arc<AppState>>,
+  headers: HeaderMap,
   RoutePath(attachment_id): RoutePath<String>,
 ) -> ApiResult<IssueDocumentResponse> {
+  let base_path = request_base_path(&headers, &state);
   let attachment_row = state
     .client
     .query_opt(
@@ -4980,7 +5119,7 @@ async fn api_attachment_delete(
 
   bump_issue_source_version(&state.client, &issue_id).await?;
 
-  let document = fetch_issue_document(&state.client, &issue_id)
+  let document = fetch_issue_document(&state.client, &issue_id, &base_path)
     .await
     .map_err(|err| api_internal(err.to_string()))?
     .ok_or_else(|| api_not_found("issue not found after attachment delete"))?;
@@ -5018,33 +5157,8 @@ async fn shutdown_signal() {
   let _ = tokio::signal::ctrl_c().await;
 }
 
-async fn run_web(args: WebArgs) -> Result<()> {
-  let runtime_dir = default_runtime_dir();
-  ensure_runtime_dirs(&runtime_dir)?;
-  let client = Arc::new(connect_postgres(&args.database_url).await?);
-  let applied_now = apply_migrations(&client, &manifest_db_dir()).await?;
-  let applied_migrations = Arc::new(list_applied_migrations(&client).await?);
-  let bind = args
-    .bind
-    .parse::<SocketAddr>()
-    .with_context(|| format!("failed to parse bind address `{}`", args.bind))?;
-
-  let loopback_base_url = format!("http://127.0.0.1:{}", bind.port());
-
-  let state = Arc::new(AppState {
-    client,
-    runtime_dir: runtime_dir.clone(),
-    database_url_redacted: redact_database_url(&args.database_url),
-    applied_migrations,
-    issue_preview_image_cache: Arc::new(Mutex::new(IssuePreviewImageCache::new(
-      ISSUE_PREVIEW_IMAGE_CACHE_MAX_BYTES,
-    ))),
-    loopback_base_url,
-    pdf_browser_cmd: google_chrome_command(),
-    pdftoppm_cmd: pdftoppm_command(),
-  });
-
-  let app = Router::new()
+fn app_routes() -> Router<Arc<AppState>> {
+  Router::new()
     .route("/", get(index_page))
     .route("/issues", get(issues_index_page))
     .route("/issues/{id}/edit", get(issue_edit_page))
@@ -5120,7 +5234,40 @@ async fn run_web(args: WebArgs) -> Result<()> {
     )
     // Reference PDFs can exceed axum's default 2 MiB body limit.
     .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
-    .with_state(state);
+}
+
+async fn run_web(args: WebArgs) -> Result<()> {
+  let runtime_dir = default_runtime_dir();
+  ensure_runtime_dirs(&runtime_dir)?;
+  let client = Arc::new(connect_postgres(&args.database_url).await?);
+  let applied_now = apply_migrations(&client, &manifest_db_dir()).await?;
+  let applied_migrations = Arc::new(list_applied_migrations(&client).await?);
+  let bind = args
+    .bind
+    .parse::<SocketAddr>()
+    .with_context(|| format!("failed to parse bind address `{}`", args.bind))?;
+
+  let loopback_base_url = format!("http://127.0.0.1:{}", bind.port());
+
+  let state = Arc::new(AppState {
+    client,
+    runtime_dir: runtime_dir.clone(),
+    database_url_redacted: redact_database_url(&args.database_url),
+    applied_migrations,
+    issue_preview_image_cache: Arc::new(Mutex::new(IssuePreviewImageCache::new(
+      ISSUE_PREVIEW_IMAGE_CACHE_MAX_BYTES,
+    ))),
+    base_path: normalize_base_path(&args.base_path),
+    loopback_base_url,
+    pdf_browser_cmd: google_chrome_command(),
+    pdftoppm_cmd: pdftoppm_command(),
+  });
+
+  let mut app = app_routes();
+  if !state.base_path.is_empty() {
+    app = app.nest(&state.base_path, app_routes());
+  }
+  let app = app.with_state(state);
 
   let listener = TcpListener::bind(bind)
     .await
