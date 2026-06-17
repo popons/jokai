@@ -45,6 +45,7 @@ description: Use when changing or debugging Jokai's `pdfme`-based notice layout,
 - `src/main.rs` の headless Chrome / `generated_files` 経路は legacy。現行の案内PDF出力本線として扱わない。
 - `pdftoppm` は PDF bytes を PNG に rasterize しているだけで、案内PDF自体を生成していない。
 - editor の余白問題を `notice-pdf.js` 側でごまかさない。非印刷UIの密度は `web-src/app.css` 側で詰める。
+- item 本文の `**...**` は本文欄だけの赤太字 inline 強調。raw text はそのまま保存し、`notice-pdf.js` で複数 text schema に分けて描画する。Markdown 全般、補足行、メタ、footer へ広げない。
 - 添付や item のデータ形状を変えるなら、`db/*.sql` / `src/main.rs` / `web-src/main.js` を同時に揃える。
 - `web-dist/` は build 成果物なので手編集しない。
 

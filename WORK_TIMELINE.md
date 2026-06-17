@@ -529,3 +529,19 @@
 - 2026-06-16 13:53:59 +0900 [検証] `JOKAI_BASE_PATH=/toys/jokai` 環境で root HTML が base path 付き asset URL を返すため、upstream 直アクセスも壊れないよう同一 Axum routes を base path 配下にも `nest`。`jokai.service` 再起動後、`/healthz`・`/toys/jokai/healthz`・`/toys/jokai/assets/app.js`・`X-Forwarded-Prefix: /toys/jokai` 付き HTML/API URL を確認した。
 - 2026-06-16 13:54:16 +0900 [検証] `caddy validate --config /home/fusee/creat/fuse/caddy-project/Caddyfile` は `/etc/letsencrypt/live/toy.fuse.co.jp/fullchain.pem` の読取権限不足で停止し、`sudo -n` も password 要求で不可。代替として `caddy adapt --config ...` は成功し、追加した Caddyfile 構文は変換可能と確認した。
 - 2026-06-16 14:10:46 +0900 [context更新] `codified-context-maintenance` を実施。`AGENTS.md` と `context/repo-map.md` に `JOKAI_BASE_PATH` / `X-Forwarded-Prefix` の subpath 配信、`deck.toml`、`scripts/install-user-systemd.sh`、外部 Caddy `/toys/jokai` proxy の routing を追記した。
+- 2026-06-17 04:11:04 +0900 [調査] web 起動ログが `http://0.0.0.0:12040` を出しており、コピー可能な接続先URLとして不便なため、`src/main.rs` の `run_web()` を確認開始。
+- 2026-06-17 04:12:37 +0900 [実装] `src/main.rs` に listener 実アドレスからコピー可能な URL を作る helper を追加。`0.0.0.0` / `::` は loopback URL と取得可能な primary local IP URL を出し、bind 事実は別ログへ分離。
+- 2026-06-17 04:13:00 +0900 [確認] `cargo fmt` 実行後、`build-error.txt` / `test-error.txt` / `clippy-error.txt` を確認して失敗なし。`git diff --check` も問題なし。既存変更の `deck.toml` は今回対象外として未変更。
+- 2026-06-17 05:36:05 +0900 [layout] 見出しのみ item の右側へ直後 item の添付サムネを上げる紙面レイアウト修正に着手。DB/API の添付 ownership は変更しない方針。
+- 2026-06-17 05:37:07 +0900 [layout] `web-src/notice-pdf.js` の item 行組版を確認。行送りは変えず、サムネ/右ラベルの描画 Y だけを直前の見出し行へ補正する方針に決定。
+- 2026-06-17 05:37:41 +0900 [実装] `isHeadingOnlyItem()` と `attachmentRowTop` を追加し、同一ページ内の直前 item が見出しのみの場合だけ、現在 item のサムネ/右ラベルを前行 top に描画するよう変更。
+- 2026-06-17 05:46:21 +0900 [検証] `/issues/a25df1a0-3d6d-4147-afa5-2598ad851012/edit` のプレビュー PNG を切り出し確認。②添付サムネ/右ラベルは①見出し行右に上がり、②本文・対象者・期限と③WCSサムネ位置は崩れていない。
+- 2026-06-17 06:05:01 +0900 [作業開始] `build-error.txt` / `test-error.txt` と `jokai-pdfme-layout` skill を確認開始。本文 `**強調**` を紙面上の赤太字へ変換する実装に着手。
+- 2026-06-17 06:06:40 +0900 [実装] `web-src/notice-pdf.js` に本文用 `**...**` inline parser と分割 text schema 描画を追加し、`web-src/main.js` / `web-src/app.css` に本文選択範囲を `**` で囲む小型 `B` ボタンを追加。
+- 2026-06-17 06:11:20 +0900 [検証] `npm run build` / `cargo fmt` / `git diff --check` 成功。`/issues/a25df1a0-3d6d-4147-afa5-2598ad851012/edit` で本文 `修正が必要な人は**修正してください**` のプレビューを生成し、本文前半は黒、`修正してください` だけ赤太字、`**` は非表示になることを確認。`B` ボタンも選択範囲を `**...**` で囲むことを確認し、未保存検証入力は破棄。
+- 2026-06-17 06:12:33 +0900 [検証] 同じ issue で本文 `未閉じ**強調` のプレビュー生成が失敗しないことを確認。未保存検証入力は破棄し、画面 STATE が `保存済み` に戻ったことを確認。
+- 2026-06-17 06:13:00 +0900 [context保守] `codified-context-maintenance` を開始。本文 `**...**` 赤太字対応後に `AGENTS.md` / `context/repo-map.md` の紙面仕様ルートが stale になっていないか確認する。
+- 2026-06-17 06:22:43 +0900 [context更新] `AGENTS.md` / `context/repo-map.md` / `.agents/skills/jokai-pdfme-layout/SKILL.md` に、item 本文 `**...**` は本文欄限定の赤太字 inline 強調で raw text 保存、Markdown 全般や補足行・メタ・footer へ広げないことを追記。
+- 2026-06-17 06:23:56 +0900 [検証] context routing audit と `git diff --check` は成功。`build-error.txt` / `clippy-error.txt` に失敗なし、`test-error.txt` は compile 行のみ、`build-error-win.txt` は未生成。worktree は既存の実装差分と context 差分が混在しているため、この保守単独では commit しない判断。
+- 2026-06-17 09:06:05 +0900 [context更新] 再度 `codified-context-maintenance` を実施。`src/main.rs` のコピー可能な listen URL ログ、`deck.toml` の `watch build` / `run server` entry、見出しのみ item の右へ次 item サムネ/右ラベルを上げる紙面挙動を `AGENTS.md` / `context/repo-map.md` へ追記。
+- 2026-06-17 09:08:19 +0900 [検証] `cargo fmt` / `git diff --check` / context routing audit 成功。`build-error.txt` / `clippy-error.txt` に失敗なし、`test-error.txt` は compile 行のみ、`build-error-win.txt` は未生成。`src/main.rs` / `web-src/notice-pdf.js` / `WORK_TIMELINE.md` に複数 topic が混在しており、source と context の安全な commit 境界が切れないため未コミット。
