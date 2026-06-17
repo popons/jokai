@@ -1,3 +1,9 @@
+["watch build"]
+cmd = "zsh watch-all-prev.sh"
+
+["run server"]
+cmd = "zsh watch-run-server.sh"
+
 [status]
 cmd = "git status"
 

@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::{Arc, Mutex};
@@ -1262,6 +1262,82 @@ fn app_url(base_path: &str, path: &str) -> String {
   } else {
     format!("{normalized_base_path}{path}")
   }
+}
+
+fn url_host_for_ip(ip: IpAddr) -> String {
+  match ip {
+    IpAddr::V4(ip) => ip.to_string(),
+    IpAddr::V6(ip) => format!("[{ip}]"),
+  }
+}
+
+fn primary_local_ip_for_family(ip: IpAddr) -> Option<IpAddr> {
+  let (bind_addr, targets): (&str, &[&str]) = match ip {
+    IpAddr::V4(_) => ("0.0.0.0:0", &["8.8.8.8:80", "1.1.1.1:80"]),
+    IpAddr::V6(_) => (
+      "[::]:0",
+      &["[2001:4860:4860::8888]:80", "[2606:4700:4700::1111]:80"],
+    ),
+  };
+
+  for target in targets {
+    let Ok(socket) = UdpSocket::bind(bind_addr) else {
+      continue;
+    };
+    if socket.connect(target).is_err() {
+      continue;
+    }
+    let Ok(local_addr) = socket.local_addr() else {
+      continue;
+    };
+    let local_ip = local_addr.ip();
+    if !local_ip.is_unspecified() && !local_ip.is_loopback() {
+      return Some(local_ip);
+    }
+  }
+
+  None
+}
+
+fn append_unique_url(urls: &mut Vec<String>, url: String) {
+  if !urls.iter().any(|existing| existing == &url) {
+    urls.push(url);
+  }
+}
+
+fn listen_url_for_host(host: &str, port: u16, base_path: &str) -> String {
+  format!("http://{host}:{port}{}", app_url(base_path, "/"))
+}
+
+fn listen_urls(listen_addr: SocketAddr, base_path: &str) -> Vec<String> {
+  let mut urls = Vec::new();
+  let port = listen_addr.port();
+  let ip = listen_addr.ip();
+
+  if ip.is_unspecified() {
+    match ip {
+      IpAddr::V4(_) => {
+        append_unique_url(&mut urls, listen_url_for_host("127.0.0.1", port, base_path));
+      }
+      IpAddr::V6(_) => {
+        append_unique_url(&mut urls, listen_url_for_host("[::1]", port, base_path));
+      }
+    }
+
+    if let Some(local_ip) = primary_local_ip_for_family(ip) {
+      append_unique_url(
+        &mut urls,
+        listen_url_for_host(&url_host_for_ip(local_ip), port, base_path),
+      );
+    }
+  } else {
+    append_unique_url(
+      &mut urls,
+      listen_url_for_host(&url_host_for_ip(ip), port, base_path),
+    );
+  }
+
+  urls
 }
 
 fn app_shell(
@@ -5247,7 +5323,15 @@ async fn run_web(args: WebArgs) -> Result<()> {
     .parse::<SocketAddr>()
     .with_context(|| format!("failed to parse bind address `{}`", args.bind))?;
 
-  let loopback_base_url = format!("http://127.0.0.1:{}", bind.port());
+  let listener = TcpListener::bind(bind)
+    .await
+    .with_context(|| format!("failed to bind {bind}"))?;
+  let listen_addr = listener
+    .local_addr()
+    .with_context(|| format!("failed to inspect listener address for {bind}"))?;
+  let base_path = normalize_base_path(&args.base_path);
+  let loopback_base_url = format!("http://127.0.0.1:{}", listen_addr.port());
+  let user_listen_urls = listen_urls(listen_addr, &base_path);
 
   let state = Arc::new(AppState {
     client,
@@ -5257,7 +5341,7 @@ async fn run_web(args: WebArgs) -> Result<()> {
     issue_preview_image_cache: Arc::new(Mutex::new(IssuePreviewImageCache::new(
       ISSUE_PREVIEW_IMAGE_CACHE_MAX_BYTES,
     ))),
-    base_path: normalize_base_path(&args.base_path),
+    base_path: base_path.clone(),
     loopback_base_url,
     pdf_browser_cmd: google_chrome_command(),
     pdftoppm_cmd: pdftoppm_command(),
@@ -5269,9 +5353,6 @@ async fn run_web(args: WebArgs) -> Result<()> {
   }
   let app = app.with_state(state);
 
-  let listener = TcpListener::bind(bind)
-    .await
-    .with_context(|| format!("failed to bind {bind}"))?;
   if !applied_now.is_empty() {
     info!(
       "applied {} database migrations on web startup",
@@ -5283,7 +5364,10 @@ async fn run_web(args: WebArgs) -> Result<()> {
     CURRENT_LAYOUT_VERSION, CURRENT_FONT_VERSION, CURRENT_RENDERER_VERSION
   );
   info!("runtime temp dir: {}", runtime_dir.display());
-  info!("jokai web listening on http://{bind}");
+  info!("jokai web listening on {}", user_listen_urls.join(" "));
+  if listen_addr.ip().is_unspecified() {
+    info!("jokai web bound to {listen_addr} (all interfaces)");
+  }
   axum::serve(listener, app)
     .with_graceful_shutdown(shutdown_signal())
     .await?;
