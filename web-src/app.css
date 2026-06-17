@@ -965,6 +965,16 @@ button {
   align-items: center;
 }
 
+.inline-format-button {
+  min-width: 28px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: 7px;
+  color: var(--danger);
+  font-weight: 800;
+  line-height: 1;
+}
+
 .item-index {
   color: var(--muted);
   font-size: 0.9rem;

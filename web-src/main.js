@@ -1648,7 +1648,17 @@ function renderItemCard(block, blockIndex, item, itemIndex, readOnly = issueEdit
           <input data-item-field="heading" data-block-index="${blockIndex}" data-item-index="${itemIndex}" value="${escapeHtml(item.heading)}" placeholder="例: 令和7年産 水稲〜" ${disabledAttr(readOnly)}>
         </div>
         <div class="field field--wide">
-          <label>本文</label>
+          <div class="field-header">
+            <label>本文</label>
+            <button
+              class="ghost-button inline-format-button"
+              type="button"
+              data-wrap-body-strong="${blockIndex}:${itemIndex}"
+              aria-label="選択範囲を赤太字にする"
+              title="選択範囲を赤太字にする"
+              ${disabledAttr(readOnly)}
+            >B</button>
+          </div>
           <textarea data-item-field="body" data-block-index="${blockIndex}" data-item-index="${itemIndex}" placeholder="記入方法や説明を書きます。" ${disabledAttr(readOnly)}>${escapeHtml(item.body)}</textarea>
         </div>
         <div class="field">
@@ -3145,6 +3155,31 @@ function bindPrintEvents() {
   bindPreviewButtons();
 }
 
+function wrapSelectedBodyStrong(blockIndex, itemIndex) {
+  const item = state.blocks[blockIndex]?.items?.[itemIndex];
+  if (!item) {
+    return;
+  }
+  const textarea = document.querySelector(
+    `textarea[data-item-field="body"][data-block-index="${blockIndex}"][data-item-index="${itemIndex}"]`,
+  );
+  if (!textarea) {
+    return;
+  }
+
+  const value = textarea.value || "";
+  const selectionStart = textarea.selectionStart ?? value.length;
+  const selectionEnd = textarea.selectionEnd ?? selectionStart;
+  const selectedText = value.slice(selectionStart, selectionEnd);
+  const nextValue = `${value.slice(0, selectionStart)}**${selectedText}**${value.slice(selectionEnd)}`;
+  textarea.value = nextValue;
+  item.body = nextValue;
+  textarea.focus();
+  textarea.setSelectionRange(selectionStart + 2, selectionStart + 2 + selectedText.length);
+  markDirty();
+  schedulePreview("item-body-strong");
+}
+
 function bindEditEvents() {
   bindPreviewButtons();
 
@@ -3235,6 +3270,15 @@ function bindEditEvents() {
       }
       adjustPaperFontScale(category, Number(deltaRaw || 0));
       renderEditor();
+    });
+  });
+
+  document.querySelectorAll("[data-wrap-body-strong]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const [blockIndex, itemIndex] = String(button.getAttribute("data-wrap-body-strong"))
+        .split(":")
+        .map((value) => Number(value));
+      wrapSelectedBodyStrong(blockIndex, itemIndex);
     });
   });
 
